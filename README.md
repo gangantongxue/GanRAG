@@ -83,6 +83,7 @@ service/<name>/
 ### Docker 约定
 
 - 镜像名 `ganrag/<服务名>:<tag>`，容器名 `ganrag-<服务名>`
+- 构建镜像前会强制删除同名旧镜像，避免旧镜像变成悬空镜像（`<none>:<none>`）
 - 容器内以普通用户运行（UID/GID 与宿主当前用户一致），`data/`、`logs/` 映射到服务目录下，避免 root 属主问题
 - 服务加入 `ganrag` 自定义网络，服务间可用容器名互访
 - 配置默认复制进镜像；构建时 `COPY_CONFIG=false` 或运行时 `--mount-config` 可改为挂载宿主机配置

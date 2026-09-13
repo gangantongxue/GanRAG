@@ -303,7 +303,7 @@ task stop                             # 停止并删除容器
 | 脚本 | 用途 |
 |------|------|
 | `scripts/build.sh [--os --arch]` | 编译本服务二进制到 `bin/server-<os>-<arch>` |
-| `scripts/build-image.sh [--tag --os --arch --copy-config]` | 构建本服务 Docker 镜像 |
+| `scripts/build-image.sh [--tag --os --arch --copy-config]` | 构建本服务 Docker 镜像（构建前删除同名旧镜像，避免悬空镜像） |
 | `scripts/run.sh [--tag --port --container-port --detach --mount-config]` | 启动本服务容器 |
 
 跨服务公共脚本（仓库根目录）：

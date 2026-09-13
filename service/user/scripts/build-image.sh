@@ -66,6 +66,14 @@ fi
 IMAGE="ganrag/${SERVICE}:${TAG}"
 echo "构建镜像 ${IMAGE}（BINARY=${BINARY} COPY_CONFIG=${COPY_CONFIG}）"
 
+# 强制删除同名旧镜像，避免重新构建打标签后旧镜像变成悬空镜像（<none>:<none>）
+if docker image inspect "${IMAGE}" >/dev/null 2>&1; then
+  echo "删除同名旧镜像 ${IMAGE}"
+  if ! docker image rm -f "${IMAGE}" >/dev/null; then
+    echo "警告：旧镜像删除失败（可能仍被运行中的容器使用），继续构建" >&2
+  fi
+fi
+
 # 构建参数：
 #   APP_UID/APP_GID：容器内运行用户的 UID/GID，默认与宿主当前用户一致，保证挂载目录可写
 #   BINARY：要复制进镜像的二进制文件名
