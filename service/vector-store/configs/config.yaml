@@ -1,0 +1,21 @@
+# Vector Store 服务配置
+#
+# 环境变量覆盖示例（前缀 GANRAG_，嵌套用下划线）：
+#   GANRAG_SERVER_PORT=50054
+#   GANRAG_STORAGE_MODE=memory
+#   GANRAG_STORAGE_PATH=/data/vector-store
+
+server:
+  host: "0.0.0.0"   # gRPC 监听地址
+  port: 50053       # gRPC 监听端口
+
+storage:
+  mode: "persistent"          # 存储模式：persistent（写入落盘，默认） | memory（内存，开发调试）
+  path: "./data/vector-store" # persistent 模式的数据目录（不存在时自动创建，重启后自动加载）
+  compress: true              # persistent 模式下是否对落盘文件 gzip 压缩
+
+log:
+  output: "both"        # 输出目标：console | file | both
+  level: "info"         # 日志级别：debug | info | warn | error
+  format: "text"        # 日志格式：json | text
+  directory: "./logs"   # 文件输出目录（output 为 file/both 时必填）

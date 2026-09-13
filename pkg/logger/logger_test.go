@@ -134,8 +134,8 @@ func TestMergeRotateOptions(t *testing.T) {
 	if result.MaxAge != 30 {
 		t.Errorf("mergeRotateOptions(nil) MaxAge = %d, want 30", result.MaxAge)
 	}
-	if result.Compress != false {
-		t.Error("mergeRotateOptions(nil) Compress should be false")
+	if result.Compress != true {
+		t.Error("mergeRotateOptions(nil) Compress should be true")
 	}
 
 	// 测试自定义配置
