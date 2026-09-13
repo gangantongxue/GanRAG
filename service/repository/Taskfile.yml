@@ -1,0 +1,39 @@
+version: '3'
+
+# Repository 服务级任务（服务尚未实现，编译/构建/运行会提示并跳过）
+#
+# 服务实现后：在 service/repository/cmd/server 下编写 main 包，并填写 vars 中的端口。
+
+vars:
+  SERVICE: repository
+  TAG: '{{.TAG | default "latest"}}'
+  OS: '{{.OS | default "linux"}}'
+  ARCH: '{{.ARCH | default "amd64"}}'
+  PORT: ''           # TODO: 服务实现后填写宿主机映射端口
+  CONTAINER_PORT: '' # TODO: 服务实现后填写容器内监听端口
+  COPY_CONFIG: '{{.COPY_CONFIG | default "true"}}'
+
+tasks:
+  build:
+    desc: 编译二进制到 service/repository/bin/server-<os>-<arch>
+    dir: '{{.TASKFILE_DIR}}'
+    cmds:
+      - ./scripts/build.sh --os {{.OS}} --arch {{.ARCH}}
+
+  build-image:
+    desc: 构建 Docker 镜像 ganrag/repository:<tag>（依赖 build）
+    dir: '{{.TASKFILE_DIR}}'
+    deps: [build]
+    cmds:
+      - ./scripts/build-image.sh --tag {{.TAG}} --os {{.OS}} --arch {{.ARCH}} --copy-config {{.COPY_CONFIG}}
+
+  run:
+    desc: 启动容器（默认前台；CLI 可追加 --detach / --mount-config）
+    dir: '{{.TASKFILE_DIR}}'
+    cmds:
+      - ./scripts/run.sh --tag {{.TAG}} {{if .PORT}}--port {{.PORT}} --container-port {{.CONTAINER_PORT}}{{end}} {{.CLI_ARGS}}
+
+  stop:
+    desc: 停止并删除容器 ganrag-repository
+    cmds:
+      - docker rm -f ganrag-{{.SERVICE}} >/dev/null 2>&1 || true

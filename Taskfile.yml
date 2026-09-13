@@ -1,0 +1,88 @@
+version: '3'
+
+# GanRAG 根 Taskfile：统一编排各服务的编译、镜像构建与容器运行
+#
+# 常用命令：
+#   task proto                     生成所有服务的 Proto Go 代码
+#   task build                     编译所有已实现服务
+#   task build -- vector-store     只编译指定服务
+#   task build-image               构建所有已实现服务的镜像
+#   task run                       后台启动所有已实现服务
+#   task run -- vector-store       前台启动指定服务
+#   task stop                      停止所有服务容器
+
+# 服务列表：自动发现 service/<name>/Taskfile.yml 并按名称排序
+vars:
+  SERVICES:
+    sh: find service -mindepth 2 -maxdepth 2 -name Taskfile.yml -exec dirname {} \; | xargs -n1 basename | sort
+
+tasks:
+  default:
+    desc: 列出所有可用任务
+    cmds:
+      - task --list
+
+  proto:
+    desc: 生成所有服务的 Proto Go 代码（api/gen）
+    cmds:
+      - ./scripts/gen-proto.sh
+
+  build:
+    desc: 编译服务（全部；指定单个：task build -- vector-store）
+    cmds:
+      - cmd: |
+          set -e
+          if [ -n "{{.CLI_ARGS}}" ]; then
+            set -- {{.CLI_ARGS}}
+            task -d "service/$1" build
+            exit 0
+          fi
+          for tf in service/*/Taskfile.yml; do
+            [ -e "$tf" ] || continue
+            svc="$(basename "$(dirname "$tf")")"
+            echo "==> build ${svc}"
+            task -d "service/${svc}" build
+          done
+
+  build-image:
+    desc: 构建服务镜像（全部；指定单个：task build-image -- vector-store）
+    cmds:
+      - cmd: |
+          set -e
+          if [ -n "{{.CLI_ARGS}}" ]; then
+            set -- {{.CLI_ARGS}}
+            task -d "service/$1" build-image
+            exit 0
+          fi
+          for tf in service/*/Taskfile.yml; do
+            [ -e "$tf" ] || continue
+            svc="$(basename "$(dirname "$tf")")"
+            echo "==> build-image ${svc}"
+            task -d "service/${svc}" build-image
+          done
+
+  run:
+    desc: 启动服务（全部后台运行；指定单个：task run -- vector-store [--detach]）
+    cmds:
+      - cmd: |
+          set -e
+          if [ -n "{{.CLI_ARGS}}" ]; then
+            set -- {{.CLI_ARGS}}
+            svc="$1"
+            shift
+            task -d "service/${svc}" run -- "$@"
+            exit 0
+          fi
+          for tf in service/*/Taskfile.yml; do
+            [ -e "$tf" ] || continue
+            svc="$(basename "$(dirname "$tf")")"
+            echo "==> run ${svc}"
+            task -d "service/${svc}" run -- --detach
+          done
+          echo "全部已实现服务已后台启动（日志：docker logs -f ganrag-<服务名>；停止：task stop）"
+
+  stop:
+    desc: 停止并删除所有服务容器
+    cmds:
+      - for: { var: SERVICES }
+        cmd: task -d "service/{{.ITEM}}" stop
