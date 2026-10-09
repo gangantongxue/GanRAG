@@ -20,7 +20,7 @@ SERVICE="$(basename "${SERVICE_DIR}")"
 
 TAG="latest"
 HOST_PORT=""
-CONTAINER_PORT="50053"
+CONTAINER_PORT="50054"
 DETACH="false"
 MOUNT_CONFIG="false"
 while [ $# -gt 0 ]; do

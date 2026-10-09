@@ -1,0 +1,18 @@
+# File Store 服务配置
+#
+# 环境变量覆盖示例（前缀 GANRAG_，嵌套用下划线）：
+#   GANRAG_SERVER_PORT=50054
+#   GANRAG_STORAGE_PATH=/data/file-store
+
+server:
+  host: "0.0.0.0"   # gRPC 监听地址
+  port: 50054       # gRPC 监听端口
+
+storage:
+  path: "./data/file-store" # 数据根目录（bucket 与元数据索引存放于其下，不存在时自动创建）
+
+log:
+  output: "both"        # 输出目标：console | file | both
+  level: "info"         # 日志级别：debug | info | warn | error
+  format: "text"        # 日志格式：json | text
+  directory: "./logs"   # 文件输出目录（output 为 file/both 时必填）

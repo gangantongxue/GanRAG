@@ -1,0 +1,82 @@
+syntax = "proto3";
+
+package filestore.v1;
+
+option go_package = "github.com/gangantongxue/GanRAG/api/gen/file-store/v1;filestorev1";
+
+// FileStore 对象存储服务
+//
+// 使用本地文件夹模拟对象存储，提供文件上传、下载、删除、元数据查询与列表能力。
+// 文件按 bucket（命名空间）+ key（对象路径）两级定位，同 bucket+key 重复上传覆盖旧文件。
+service FileStore {
+  // Upload 上传文件（≤10MB），同 bucket+key 已存在时覆盖旧文件并更新元数据
+  rpc Upload(UploadRequest) returns (UploadResponse);
+
+  // Download 下载文件内容，文件不存在返回 NotFound
+  rpc Download(DownloadRequest) returns (DownloadResponse);
+
+  // Delete 删除文件及其元数据，文件不存在返回 NotFound
+  rpc Delete(DeleteRequest) returns (DeleteResponse);
+
+  // GetMetadata 查询单个文件的元数据，文件不存在返回 NotFound
+  rpc GetMetadata(GetMetadataRequest) returns (GetMetadataResponse);
+
+  // List 列出 bucket 下所有文件的元数据（bucket 不存在返回空列表）
+  rpc List(ListRequest) returns (ListResponse);
+}
+
+// FileMetadata 文件元数据
+message FileMetadata {
+  string bucket = 1;             // 所属命名空间
+  string key = 2;                // 对象路径
+  int64 size = 3;                // 文件字节数
+  string content_type = 4;       // MIME 类型
+  string sha256 = 5;             // 内容校验和（十六进制小写）
+  int64 uploaded_at_unix = 6;    // 最后上传时间（Unix 秒）
+}
+
+// UploadRequest 上传请求（整体携带文件内容）
+message UploadRequest {
+  string bucket = 1;             // 命名空间（必填），如 attachments / documents
+  string key = 2;                // 对象路径（必填），允许 "/" 分层，如 article-123/img.png
+  bytes data = 3;                // 文件内容（必填，≤10MB）
+  string content_type = 4;       // MIME 类型（可选，缺省 application/octet-stream）
+}
+
+message UploadResponse {
+  FileMetadata metadata = 1;     // 上传后的最新元数据
+}
+
+message DownloadRequest {
+  string bucket = 1;
+  string key = 2;
+}
+
+message DownloadResponse {
+  bytes data = 1;                // 文件内容
+  FileMetadata metadata = 2;     // 文件元数据（含 sha256，便于调用方校验）
+}
+
+message DeleteRequest {
+  string bucket = 1;
+  string key = 2;
+}
+
+message DeleteResponse {}
+
+message GetMetadataRequest {
+  string bucket = 1;
+  string key = 2;
+}
+
+message GetMetadataResponse {
+  FileMetadata metadata = 1;
+}
+
+message ListRequest {
+  string bucket = 1;             // 命名空间（必填）
+}
+
+message ListResponse {
+  repeated FileMetadata files = 1;
+}

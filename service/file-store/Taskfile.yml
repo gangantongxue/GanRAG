@@ -1,16 +1,16 @@
 version: '3'
 
-# File Store 服务级任务（服务尚未实现，编译/构建/运行会提示并跳过）
+# File Store 服务级任务
 #
-# 服务实现后：在 service/file-store/cmd/server 下编写 main 包，并填写 vars 中的端口。
+# 端口约定见 docs/architecture.md：gRPC 端口 50054（紧接 vector-store 的 50053）。
 
 vars:
   SERVICE: file-store
   TAG: '{{.TAG | default "latest"}}'
   OS: '{{.OS | default "linux"}}'
   ARCH: '{{.ARCH | default "amd64"}}'
-  PORT: ''           # TODO: 服务实现后填写宿主机映射端口
-  CONTAINER_PORT: '' # TODO: 服务实现后填写容器内监听端口
+  PORT: '50054'           # 宿主机映射端口
+  CONTAINER_PORT: '50054' # 容器内监听端口
   COPY_CONFIG: '{{.COPY_CONFIG | default "true"}}'
 
 tasks:

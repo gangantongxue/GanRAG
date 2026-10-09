@@ -166,3 +166,4 @@ Go 标准库结构化日志 + 日志文件轮转：
 | 2026-09-12 | 采用 golang-migrate 做数据库迁移 | SQL 导入、up/down 成对 |
 | 2026-09-12 | 自建 Vector Store 服务 | Go 内嵌向量库 + gRPC |
 | 2026-09-12 | 自建 File Store 服务 | 本地文件模拟 + gRPC |
+| 2026-10-09 | 定稿 File Store 接口：一元 RPC 整体传输、同 key 覆盖语义、JSON 元数据、端口 50054 | 文件以 <10MB 小文件为主，流式属过度设计；upsert 语义与 vector-store 一致；详见 service/file-store/docs/architecture.md |
