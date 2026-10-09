@@ -4,6 +4,9 @@
 
 本文档记录 GanRAG 项目的总体架构选型，主要涉及服务间通信、公共基础设施等全局性技术决策。
 
+- 产品形态、权限模型与分期路线：[docs/product.md](product.md)
+- 数据模型与表结构：[docs/data-model.md](data-model.md)
+
 ## 服务架构
 
 ```
@@ -147,7 +150,7 @@ Go 标准库结构化日志 + 日志文件轮转：
 |------|----------|
 | Gateway | [service/gateway/docs/architecture.md](../../service/gateway/docs/architecture.md) |
 | AI Service | [service/ai/docs/architecture.md](../../service/ai/docs/architecture.md) |
-| User Service | - |
+| User Service | [service/user/docs/architecture.md](../../service/user/docs/architecture.md) |
 | Repository Service | - |
 | Vector Store | [service/vector-store/docs/architecture.md](../../service/vector-store/docs/architecture.md) |
 | File Store | [service/file-store/docs/architecture.md](../../service/file-store/docs/architecture.md) |
@@ -167,3 +170,12 @@ Go 标准库结构化日志 + 日志文件轮转：
 | 2026-09-12 | 自建 Vector Store 服务 | Go 内嵌向量库 + gRPC |
 | 2026-09-12 | 自建 File Store 服务 | 本地文件模拟 + gRPC |
 | 2026-10-09 | 定稿 File Store 接口：一元 RPC 整体传输、同 key 覆盖语义、JSON 元数据、端口 50054 | 文件以 <10MB 小文件为主，流式属过度设计；upsert 语义与 vector-store 一致；详见 service/file-store/docs/architecture.md |
+| 2026-10-09 | User 服务采用双 token 认证：user 签发（access JWT 15m + refresh 不透明串 7 天）、gateway 验签校验 | 签发与校验分离；access 短期 + refresh 轮换与吊销，无需 Redis 会话黑名单；详见 service/user/docs/architecture.md |
+| 2026-10-09 | MySQL 由仓库根 docker-compose.yml 统一编排，Task 新增 infra 任务 | MySQL 为 user/repository 等服务共享基础设施，不属于单一服务；Redis 暂不引入 |
+| 2026-10-09 | User 服务第一期功能范围：注册、登录、刷新、查自己、修改密码 | 最小可用闭环；OAuth、找回密码、管理接口等待需求明确（YAGNI） |
+| 2026-10-09 | 端口规划：gateway 8080、user 50051、repository 50052、ai 50055 | 承接 vector-store 50053、file-store 50054 的顺序分配，见 service/user/docs/architecture.md |
+| 2026-10-09 | 产品形态定稿：GitHub 式三栏界面；左栏只展示「我的 + 成员的」，star/关注列表在个人页面，他人的库靠搜索发现 | 左栏保持高频工作集不被低频内容淹没；关系状态仍全部存储供检索权重使用；详见 docs/product.md |
+| 2026-10-09 | 知识库权限三级：owner / editor / reader，公开库陌生人只读（由 visibility 推导、不建成员行） | 覆盖「私有库加成员、公开库提升权限」两种诉求；陌生人权限推导省去大量冗余行 |
+| 2026-10-09 | md 图片与互链保存时解析为附件/文章 ID 的稳定 URL，私有库图片经 gateway 鉴权访问 | 文章移动/重命名不打断引用；鉴权保证私有库图片不泄露；详见 docs/data-model.md |
+| 2026-10-09 | 聊天会话绑定检索范围（单库或全局，kb_id=0 表示全局）；关系状态（own/member/star/follow）作为检索权重信号 | 检索范围随会话固化保证历史会话可复现；权重映射由 AI 服务配置持有，P3 调参 |
+| 2026-10-09 | 表结构 P1 一次设计到位，接口/界面按 P1 内容聊天、P2 社交、P3 权重三期交付 | 避免后期破坏性迁移；关系状态从第一天起即为完整事实；详见 docs/data-model.md |

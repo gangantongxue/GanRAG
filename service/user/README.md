@@ -1,8 +1,9 @@
 # User 服务
 
-用户管理服务。
+用户管理服务：注册、登录（双 token 签发）、token 轮换、用户信息查询、修改密码。
+架构选型与接口设计详见 [docs/architecture.md](docs/architecture.md)（2026-10-09 定稿）。
 
-> 当前状态：目录骨架，尚未实现。实现时在 `cmd/server` 下编写 main 包，并在 `Taskfile.yml` 的 `PORT` / `CONTAINER_PORT` 中填写端口。
+> 当前状态：架构文档已定稿，服务代码尚未实现（目录骨架）。实现时在 `cmd/server` 下编写 main 包，并在 `Taskfile.yml` 的 `PORT` / `CONTAINER_PORT` 中填写 `50051`。
 
 ## Task 命令
 

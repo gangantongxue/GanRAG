@@ -1,11 +1,13 @@
 # GanRAG
 
-GanRAG 是一个知识库系统：用户可以上传自己的知识库文章，系统将文章进行向量化存储；内置的 AI 聊天会检索用户上传的文章内容，并据此回答用户的问题。
+GanRAG 是一个 GitHub 风格的知识库系统：用户创建公开/私有的知识库，以目录树组织 md/txt 文章并配图；内置的 AI 聊天基于知识库内容检索并回答问题。知识库支持成员协作、star 与用户关注等社交关系，这些关系状态同时是 AI 检索排序的权重信号（产品形态详见 [docs/product.md](docs/product.md)）。
 
 RAG（检索增强生成）是实现「基于用户自己的知识回答问题」的技术手段，系统的产品定位是知识库（知识上传 → 向量化存储 → AI 问答），而非一个通用 RAG 框架。
 
 技术实现上，系统采用基于 Go 的多服务架构，服务间通过 gRPC 通信，前端为 React + TypeScript。
 
+- 产品形态与功能分期：[docs/product.md](docs/product.md)
+- 数据模型（全部业务表）：[docs/data-model.md](docs/data-model.md)
 - 总体架构与技术选型：[docs/architecture.md](docs/architecture.md)
 
 ## 目录结构
