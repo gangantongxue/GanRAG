@@ -1,0 +1,45 @@
+# GanRAG 基础设施编排：MySQL（user / repository 等多个服务共享，不属于单一服务）
+#
+# 用法：
+#   task infra        启动（后台，healthcheck 就绪后可执行 task db-up）
+#   task infra-down   停止（数据卷 mysql-data 保留）
+#
+# 连接参数来自仓库根 .env（已 gitignore，模板见 .env.example）：
+#   MYSQL_ROOT_PASSWORD   root 密码（仅容器初始化用）
+#   GANRAG_DB_USER        应用账号（默认 ganrag，task db-* 与各服务共用）
+#   GANRAG_DB_PASSWORD    应用账号密码
+#   GANRAG_DB_PORT        宿主机映射端口（默认 3306，也是 task db-* 连接的端口）
+services:
+  mysql:
+    image: mysql:8.0
+    container_name: ganrag-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?请在 .env 设置 MYSQL_ROOT_PASSWORD}
+      # 应用账号：入口脚本自动创建用户；授权由 scripts/mysql-init 首次初始化时执行
+      MYSQL_USER: ${GANRAG_DB_USER:-ganrag}
+      MYSQL_PASSWORD: ${GANRAG_DB_PASSWORD:?请在 .env 设置 GANRAG_DB_PASSWORD}
+      TZ: Asia/Shanghai
+    ports:
+      - "${GANRAG_DB_PORT:-3306}:3306"
+    volumes:
+      - mysql-data:/var/lib/mysql
+      # 首次初始化时执行（建库前），为应用账号授权，使其可 CREATE DATABASE 与读写 ganrag_* 库
+      - ./scripts/mysql-init:/docker-entrypoint-initdb.d:ro
+    networks:
+      - ganrag
+    healthcheck:
+      # $$ 转义 compose 插值，由容器内 shell 展开环境变量
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p$$MYSQL_ROOT_PASSWORD --silent"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
+volumes:
+  mysql-data:
+
+networks:
+  ganrag:
+    # 外部网络：与各服务 scripts/run.sh 使用的 ganrag 网络同名复用（task infra 会兜底创建）
+    name: ganrag
+    external: true

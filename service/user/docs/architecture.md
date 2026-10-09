@@ -66,7 +66,7 @@
 | 签发方 | user 服务签发，Gateway 校验 | 账号凭证的签发与校验分离：密钥由 user（签发）与 Gateway（校验）通过共享配置持有，user 不感知请求链路 |
 | access token | JWT HS256，有效期 **15 分钟** | Gateway 本地验签零回源；短期限制泄露窗口 |
 | refresh token | 32 字节随机数（base64url），有效期 **7 天**，DB 只存 SHA-256 哈希 | 不可伪造、可吊销；哈希存储即使库泄密也无法直接使用 |
-| 刷新策略 | **轮换（rotation）**：Refresh 时签发新 access + 新 refresh，旧 refresh 立即作废 | 短 refresh 寿命 + 每次轮换，配合重用检测可及时发现令牌泄露 |
+| 刷新策略 | **轮换（rotation）**：Refresh 时签发新 access + 新 refresh，旧 refresh 标记 `revoked_at` 作废（行保留至其自然过期） | 行保留才能识别「重用已作废 token」；若直接删除则哈希行消失，无法区分伪造与重用 |
 | 重用检测 | 若收到已作废的 refresh token，视为泄露，吊销该用户全部 refresh token | 强制该用户重新登录 |
 | 改密行为 | 修改密码成功后吊销该用户全部 refresh token | 已登录会话在 access 过期（≤15 分钟）后需重新登录 |
 | 不用 Redis | refresh 落 MySQL，不引入 Redis | 单机账号规模下 DB 完全够用，避免为 token 提前引入基础设施 |
@@ -93,6 +93,7 @@ Gateway ──本地验签（共享密钥）──▶ 通过则转发，user_id 
 ## 接口设计
 
 Proto 文件位置：`api/proto/user/v1/user.proto`（生成代码到 `api/gen/user/v1`，修改后执行 `task proto`）。
+服务名草案中的 `service User` 与 `message User` 同名（proto3 禁止），已定为 `service UserService`。
 
 ### Proto 草案
 
@@ -103,7 +104,7 @@ package user.v1;
 
 option go_package = "github.com/gangantongxue/GanRAG/api/gen/user/v1;userv1";
 
-service User {
+service UserService {
   rpc Register(RegisterRequest) returns (RegisterResponse);
   rpc Login(LoginRequest) returns (LoginResponse);
   rpc Refresh(RefreshRequest) returns (RefreshResponse);
@@ -165,7 +166,7 @@ message UpdatePasswordResponse {}
 | Login | 用户不存在与密码错误**统一返回** `Unauthenticated` | `Unauthenticated`；`FailedPrecondition` 用户被禁用 |
 | Refresh | token 过期 / 作废 / 重用 | `Unauthenticated`（重用场景同时吊销该用户全部 refresh） |
 | GetUser | 目标不存在 | `NotFound` |
-| UpdatePassword | user_id 缺失、新密码不合法 | `InvalidArgument`；`Unauthenticated` 旧密码错误或用户不存在；`NotFound` 目标不存在 |
+| UpdatePassword | user_id 缺失、新密码不合法 | `InvalidArgument`；`Unauthenticated` 旧密码错误或用户不存在（user_id 由 Gateway 从 token 注入，用户不存在说明凭证陈旧，与防枚举策略一致，不返回 `NotFound`） |
 
 - Login 不区分「用户不存在」与「密码错误」，防止用户名枚举
 - 所有接口错误细节只写日志，不回传内部信息（与 vector-store / file-store 约定一致）
@@ -174,17 +175,19 @@ message UpdatePasswordResponse {}
 
 ### 迁移文件位置
 
-`service/user/migrations/`，遵循「服务独立、互不引用」的项目约定：
+`pkg/db/migrations/ganrag_user/`（数据库基础设施集中于全局包 `pkg/db`，遵循「每个服务一个 schema、一套独立迁移」，库名即子目录名）：
 
 ```
-service/user/migrations/
+pkg/db/migrations/ganrag_user/
 ├── 0001_users.up.sql
 ├── 0001_users.down.sql
 ├── 0002_refresh_tokens.up.sql
-└── 0002_refresh_tokens.down.sql
+├── 0002_refresh_tokens.down.sql
+├── 0003_user_follows.up.sql
+└── 0003_user_follows.down.sql
 ```
 
-**执行方式**：服务启动时执行 `migrate.Up`（配置 `database.auto_migrate`，默认 `true`），迁移失败则拒绝启动，避免带着旧 schema 提供服务。所有服务共用一个 MySQL 实例、各自独立的 migration 版本前缀（后续 repository 服务沿用 `service/repository/migrations/`）。
+**执行方式**：由 `pkg/db` 执行 `migrate.Up`（服务启动时按配置 `database.auto_migrate`，默认 `true`，迁移失败则拒绝启动；亦可用 `task db-up` 手动同步）。所有服务共用一个 MySQL 实例、各自独立的 migration 子目录。修改 SQL 前必须先 `task db-status` 查看当前版本（见根 AGENTS.md「SQL 迁移修改规范」）。
 
 ### 表结构
 
@@ -208,6 +211,7 @@ CREATE TABLE refresh_tokens (
   user_id    BIGINT UNSIGNED NOT NULL,
   token_hash CHAR(64)        NOT NULL,  -- SHA-256 hex（明文 refresh 的哈希）
   expires_at DATETIME        NOT NULL,
+  revoked_at DATETIME        NULL,      -- 轮换/吊销时间；NULL = 活跃，非 NULL = 已作废（重用检测信号）
   created_at DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (id),
   UNIQUE KEY uk_refresh_token_hash (token_hash),
@@ -219,7 +223,7 @@ CREATE TABLE refresh_tokens (
 ### 读写行为
 
 - **登录 / 刷新**：单条主键或唯一索引查询，无慢路径
-- **refresh 轮换**：同事务内删除（作废）旧记录 + 插入新记录，保证一致性
+- **refresh 轮换**：同事务内标记旧记录作废（`revoked_at` 置为当前时间，条件 `revoked_at IS NULL` 保证原子性）+ 插入新记录；已作废行保留至其自然过期，用于重用检测（直接删除则无法区分伪造与重用）
 - **过期清理**：登录 / 刷新时顺带删除该用户已过期记录（惰性清理，无需定时任务）
 - **改密**：单事务内更新 `users.password_hash` + 删除该用户全部 refresh 记录
 
@@ -282,7 +286,7 @@ services:
 | 服务 | 端口 | 协议 | 状态 |
 |------|------|------|------|
 | gateway | 8080 | HTTP | 未实现 |
-| user | 50051 | gRPC | 未实现（本文档定稿） |
+| user | 50051 | gRPC | 已实现（2026-10-09） |
 | repository | 50052 | gRPC | 未实现 |
 | vector-store | 50053 | gRPC | 已实现 |
 | file-store | 50054 | gRPC | 已实现 |
@@ -292,18 +296,20 @@ services:
 
 ```
 service/user/
-├── cmd/server/              # 服务入口（配置加载、日志初始化、迁移执行、优雅退出）
-├── configs/config.yaml      # 默认配置（含占位的 database / jwt 段）
+├── cmd/server/              # 服务入口（配置加载、日志初始化、数据库与迁移、优雅退出）
+├── configs/config.yaml      # 默认配置（database 段结构由 pkg/db.Config 定义）
 ├── docs/architecture.md     # 本文档
 ├── internal/
-│   ├── config/              # 配置结构、校验（jwt.secret 必填校验）
-│   ├── store/               # GORM 模型、连接管理、用户与 refresh token 读写
-│   ├── auth/                # bcrypt 哈希校验、JWT 签发/解析
+│   ├── config/              # 配置结构、校验（jwt.secret 必填校验，database 复用 pkg/db.Config）
+│   ├── store/               # 用户与 refresh token 业务查询（基于 pkg/db 生成的 query 包）
+│   ├── auth/                # bcrypt 哈希校验、JWT 签发、refresh token 生成与哈希
 │   └── server/              # gRPC handler 与错误码映射、服务生命周期
-├── migrations/              # golang-migrate SQL（up/down 成对）
 └── scripts/                 # 本服务构建与运行脚本（沿用既有约定）
 ```
 
+数据库相关（表结构 SQL、迁移执行、gorm gen 生成的 model/query）统一在仓库全局包 `pkg/db/`，本服务通过 `import pkg/db` 与 `pkg/db/query/ganrag_user` 使用。
+
 ## 实现状态
 
-> 当前状态：架构文档已定稿（2026-10-09），服务代码尚未实现。实现时按本文档执行，并在 `Taskfile.yml` 的 `PORT` / `CONTAINER_PORT` 填写 `50051`。
+> 已实现（2026-10-09）：proto、配置、迁移（0001-0003，位于 `pkg/db/migrations/ganrag_user/`）、
+> store/auth/handler、单元测试（SQLite）与端到端冒烟（grpcurl）均完成；`Taskfile.yml` 端口已填 50051。

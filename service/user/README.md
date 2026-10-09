@@ -1,14 +1,30 @@
 # User 服务
 
 用户管理服务：注册、登录（双 token 签发）、token 轮换、用户信息查询、修改密码。
-架构选型与接口设计详见 [docs/architecture.md](docs/architecture.md)（2026-10-09 定稿）。
+架构选型与接口设计详见 [docs/architecture.md](docs/architecture.md)（2026-10-09 定稿，同日实现）。
 
-> 当前状态：架构文档已定稿，服务代码尚未实现（目录骨架）。实现时在 `cmd/server` 下编写 main 包，并在 `Taskfile.yml` 的 `PORT` / `CONTAINER_PORT` 中填写 `50051`。
+数据库部分（SQL 迁移、同步、gorm gen 生成的 model/query）在仓库全局包 [pkg/db](../../pkg/db/README.md)，
+本服务通过 `import pkg/db` 与 `pkg/db/query/ganrag_user` 使用；SQL 修改规范见根 AGENTS.md。
+
+## 运行前提
+
+```bash
+# 仓库根目录
+cp .env.example .env   # 首次：设置 MySQL 密码
+task infra             # 启动 MySQL
+task db-up             # 同步迁移（服务配置 auto_migrate=true 时启动也会自动执行）
+```
+
+本地运行需在本目录准备 `.env`（已 gitignore）：
+
+```bash
+GANRAG_DATABASE_PASSWORD=<与根 .env 的 GANRAG_DB_PASSWORD 一致>
+GANRAG_JWT_SECRET=<随机字符串，必填>
+```
 
 ## Task 命令
 
 本服务的构建与运行由 Task 管理，脚本位于本服务 `scripts/` 目录（各服务独立维护，互不引用）。
-实现完成后以下命令即可直接使用：
 
 ```bash
 task build                          # 编译到 bin/server-linux-amd64（默认 linux/amd64）
@@ -21,6 +37,12 @@ task run -- --detach --mount-config # 用宿主机 configs/config.yaml 覆盖镜
 task stop                           # 停止并删除容器
 ```
 
+容器内访问 MySQL 需注入网络内主机名：
+
+```bash
+task run -- --detach --env GANRAG_DATABASE_HOST=ganrag-mysql --env-file .env
+```
+
 在仓库根目录也可以统一操作：
 
 ```bash
@@ -30,4 +52,11 @@ task run -- user --detach
 task stop
 ```
 
-服务未实现时，build / build-image / run 会提示并跳过，不报错。
+## 本地调试（grpcurl）
+
+```bash
+go run ./cmd/server          # 在本目录启动（需 MySQL 已就绪）
+grpcurl -plaintext -d '{"username":"demo","password":"password123"}' \
+  localhost:50051 user.v1.UserService/Register
+grpcurl -plaintext localhost:50051 list   # 查看服务列表（已开反射）
+```

@@ -1,0 +1,77 @@
+syntax = "proto3";
+
+package user.v1;
+
+option go_package = "github.com/gangantongxue/GanRAG/api/gen/user/v1;userv1";
+
+// UserService 服务：账号生命周期管理
+//
+// 提供注册、登录（双 token 签发）、refresh token 轮换、用户信息查询与修改密码。
+// access token 的校验由 Gateway 负责（本地验签，不回源本服务）。
+// 注：架构文档草案中 service 与 message 同名为 User，proto3 禁止，service 更名为 UserService。
+service UserService {
+  // Register 用户注册（校验用户名唯一性，密码 bcrypt 哈希存储）
+  rpc Register(RegisterRequest) returns (RegisterResponse);
+  // Login 用户登录（校验凭证，签发 access + refresh 双 token）
+  rpc Login(LoginRequest) returns (LoginResponse);
+  // Refresh 轮换 token 对（旧 refresh 作废；重用已作废 token 视为泄露，吊销该用户全部 refresh）
+  rpc Refresh(RefreshRequest) returns (RefreshResponse);
+  // GetUser 按 ID 查询用户信息（供 Gateway / 其他服务调用）
+  rpc GetUser(GetUserRequest) returns (GetUserResponse);
+  // UpdatePassword 修改密码（校验旧密码，成功后吊销该用户全部 refresh token）
+  rpc UpdatePassword(UpdatePasswordRequest) returns (UpdatePasswordResponse);
+}
+
+message User {
+  int64  id = 1;         // 用户 ID（自增主键）
+  string username = 2;   // 用户名（唯一）
+  string nickname = 3;   // 昵称（首期默认等于用户名）
+  int32  status = 4;     // 1 正常 0 禁用
+  int64  created_at_unix = 5;  // 创建时间（Unix 秒）
+  int64  updated_at_unix = 6;  // 更新时间（Unix 秒）
+}
+
+message RegisterRequest {
+  string username = 1;   // 3-32 字符，字母数字与 _ -
+  string password = 2;   // 8-64 字符
+}
+// RegisterResponse 注册成功不返回 token，前端随后走登录
+message RegisterResponse {
+  User user = 1;
+}
+
+message LoginRequest {
+  string username = 1;
+  string password = 2;
+}
+message LoginResponse {
+  User   user = 1;
+  string access_token = 2;   // JWT，15 分钟
+  string refresh_token = 3;  // 不透明串，7 天
+  int64  access_expires_in = 4;   // access 有效期（秒）
+  int64  refresh_expires_in = 5;  // refresh 有效期（秒）
+}
+
+message RefreshRequest {
+  string refresh_token = 1;
+}
+message RefreshResponse {
+  string access_token = 1;
+  string refresh_token = 2;
+  int64  access_expires_in = 3;
+  int64  refresh_expires_in = 4;
+}
+
+message GetUserRequest {
+  int64 id = 1;
+}
+message GetUserResponse {
+  User user = 1;
+}
+
+message UpdatePasswordRequest {
+  int64  user_id = 1;      // 由 Gateway 从 access token 解析后注入，不信任请求体
+  string old_password = 2;
+  string new_password = 3; // 8-64 字符
+}
+message UpdatePasswordResponse {}

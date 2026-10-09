@@ -3,11 +3,13 @@
 #
 # 用法：
 #   run.sh [--tag <tag>] [--port <hostPort>] [--container-port <port>] [--detach] [--mount-config]
+#          [--env KEY=VALUE]... [--env-file <path>]
 #
 # 说明：
 #   - 容器以宿主当前用户（非 root）运行，日志与数据目录映射到 <service>/logs 与 <service>/data
 #   - 默认前台运行；--detach 后台运行（容器名 ganrag-<service>）
 #   - 镜像内默认已复制配置；--mount-config 时用宿主机 configs/config.yaml 覆盖
+#   - --env / --env-file 向容器注入环境变量（如 user 服务的 GANRAG_DATABASE_HOST=ganrag-mysql）
 #   - 服务加入 ganrag 自定义网络，便于服务间按容器名互访
 #   - 服务尚未实现时提示并跳过
 set -euo pipefail
@@ -20,9 +22,10 @@ SERVICE="$(basename "${SERVICE_DIR}")"
 
 TAG="latest"
 HOST_PORT=""
-CONTAINER_PORT="50053"
+CONTAINER_PORT="50051"
 DETACH="false"
 MOUNT_CONFIG="false"
+ENV_ARGS=()
 while [ $# -gt 0 ]; do
   case "$1" in
   --tag)
@@ -44,6 +47,14 @@ while [ $# -gt 0 ]; do
   --mount-config)
     MOUNT_CONFIG="true"
     shift
+    ;;
+  --env)
+    ENV_ARGS+=(-e "$2")
+    shift 2
+    ;;
+  --env-file)
+    ENV_ARGS+=(--env-file "$2")
+    shift 2
     ;;
   *)
     echo "未知参数：$1" >&2
@@ -96,7 +107,7 @@ if [ "${MOUNT_CONFIG}" = "true" ] && [ -f "${SERVICE_DIR}/configs/config.yaml" ]
 fi
 
 echo "启动 ${SERVICE}（镜像 ${IMAGE}）"
-docker run "${RUN_ARGS[@]}" "${IMAGE}"
+docker run "${RUN_ARGS[@]}" ${ENV_ARGS[@]+"${ENV_ARGS[@]}"} "${IMAGE}"
 
 if [ "${DETACH}" = "true" ]; then
   echo "已后台启动：ganrag-${SERVICE}（日志：docker logs -f ganrag-${SERVICE}；停止：task stop）"

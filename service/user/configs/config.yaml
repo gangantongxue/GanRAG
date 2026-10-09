@@ -1,0 +1,34 @@
+# User 服务配置
+#
+# 环境变量覆盖示例（前缀 GANRAG_，嵌套用下划线）：
+#   GANRAG_SERVER_PORT=50051
+#   GANRAG_DATABASE_PASSWORD=xxx     # 数据库密码（建议不落配置文件）
+#   GANRAG_DATABASE_HOST=ganrag-mysql # 容器网络内用容器名访问
+#   GANRAG_JWT_SECRET=xxx            # 必填：JWT 签发密钥
+
+server:
+  host: "0.0.0.0"   # gRPC 监听地址
+  port: 50051       # gRPC 监听端口
+
+database:
+  host: "127.0.0.1"
+  port: 3306
+  user: "ganrag"
+  password: ""            # 建议用 GANRAG_DATABASE_PASSWORD 环境变量覆盖，不落配置文件
+  dbname: "ganrag_user"   # 必须等于 pkg/db/migrations/ 下的子目录名
+  max_open_conns: 20
+  max_idle_conns: 5
+  conn_max_lifetime: "30m"
+  auto_migrate: true      # 启动时执行迁移（失败拒绝启动）
+
+jwt:
+  secret: ""              # 必填，建议 GANRAG_JWT_SECRET 环境变量注入（.env 已 gitignore）
+  issuer: "ganrag"
+  access_ttl: "15m"
+  refresh_ttl: "168h"     # 7 天
+
+log:
+  output: "both"          # console | file | both
+  level: "info"           # debug | info | warn | error
+  format: "text"          # json | text
+  directory: "./logs"

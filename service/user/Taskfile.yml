@@ -9,8 +9,8 @@ vars:
   TAG: '{{.TAG | default "latest"}}'
   OS: '{{.OS | default "linux"}}'
   ARCH: '{{.ARCH | default "amd64"}}'
-  PORT: ''           # TODO: 服务实现后填写宿主机映射端口
-  CONTAINER_PORT: '' # TODO: 服务实现后填写容器内监听端口
+  PORT: '50051'           # 宿主机映射端口（gRPC 服务对外调试用）
+  CONTAINER_PORT: '50051' # 容器内监听端口
   COPY_CONFIG: '{{.COPY_CONFIG | default "true"}}'
 
 tasks:

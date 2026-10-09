@@ -86,3 +86,30 @@ tasks:
     cmds:
       - for: { var: SERVICES }
         cmd: task -d "service/{{.ITEM}}" stop
+
+  infra:
+    desc: 启动共享基础设施（MySQL）
+    cmds:
+      # ganrag 网络为外部共享（compose 与各服务 run.sh 共用），不存在时先创建
+      - docker network inspect ganrag >/dev/null 2>&1 || docker network create ganrag
+      - docker compose up -d
+
+  infra-down:
+    desc: 停止共享基础设施（数据卷保留）
+    cmds:
+      - docker compose down
+
+  db-up:
+    desc: 将全部库同步到最新 SQL 迁移（golang-migrate up，幂等）
+    cmds:
+      - go run ./pkg/db/cmd/migrate up
+
+  db-status:
+    desc: 查看各库当前迁移版本与「可修改 / 已应用锁定」的 SQL 文件
+    cmds:
+      - go run ./pkg/db/cmd/migrate status
+
+  db-gen:
+    desc: 同步迁移后用 gorm gen 生成模型与查询代码（pkg/db/model、pkg/db/query）
+    cmds:
+      - go run ./pkg/db/gen

@@ -6,13 +6,13 @@
 
 ## 服务归属
 
-MySQL 单实例（根目录 compose 编排），**每个服务一个 schema、一套独立迁移**，遵循「服务独立、互不引用」的项目约定：
+MySQL 单实例（根目录 compose 编排），**每个服务一个 schema、一套独立迁移**，遵循「服务独立、互不引用」的项目约定；SQL 迁移文件集中存放在 `pkg/db/migrations/<库名>/`（由 `pkg/db` 统一同步与执行，修改规范见根 AGENTS.md「SQL 迁移修改规范」）：
 
 | Schema | 拥有者 | 表 | 迁移位置 |
 |--------|--------|----|----------|
-| `ganrag_user` | User 服务 | `users`、`refresh_tokens`、`user_follows` | `service/user/migrations/` |
-| `ganrag_repository` | Repository 服务 | `knowledge_bases`、`directories`、`articles`、`attachments`、`article_attachments`、`article_refs`、`kb_members`、`kb_stars` | `service/repository/migrations/` |
-| `ganrag_ai` | AI 服务 | `chat_sessions`、`chat_messages` | `service/ai/migrations/` |
+| `ganrag_user` | User 服务 | `users`、`refresh_tokens`、`user_follows` | `pkg/db/migrations/ganrag_user/` |
+| `ganrag_repository` | Repository 服务 | `knowledge_bases`、`directories`、`articles`、`attachments`、`article_attachments`、`article_refs`、`kb_members`、`kb_stars` | `pkg/db/migrations/ganrag_repository/` |
+| `ganrag_ai` | AI 服务 | `chat_sessions`、`chat_messages` | `pkg/db/migrations/ganrag_ai/` |
 
 **跨服务引用规则**：跨 schema 的关联（如 `kb_members.user_id` → `users.id`）**只做逻辑引用，不建物理外键**——外键会把两个服务的迁移耦合成必须按序执行，违背服务独立。引用完整性由应用层保证；跨服务查询走 gRPC，不做跨 schema JOIN。
 
@@ -297,7 +297,7 @@ relation(kb, me) =
 
 | 阶段 | 迁移 | 说明 |
 |------|------|------|
-| P1 | user: 0001-0002；repository: 0001-0008（八张表）；ai: 0001-0002 | 全部表一次建齐，社交接口 P2 再开 |
+| P1 | user: 0001-0003（含 0003_user_follows，社交接口 P2 开放）；repository: 0001-0008（八张表）；ai: 0001-0002 | 全部表一次建齐，社交接口 P2 再开 |
 | P2 | 无新表 | star / follow / 搜索 / 个人页面接口与界面 |
 | P3 | 无新表 | 权重配置接入与调参 |
 
