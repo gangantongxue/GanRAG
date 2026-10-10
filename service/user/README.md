@@ -52,6 +52,16 @@ task run -- user --detach
 task stop
 ```
 
+## 接口功能测试
+
+```bash
+go test ./... -count=1                 # bufconn gRPC 接口测试（真实协议 + SQLite，无需外部依赖）
+./scripts/e2e.sh                       # 真实环境冒烟：真实 MySQL + 真实配置 + TCP，全接口 32 条断言
+```
+
+`e2e.sh` 前置：`task infra` 启动 MySQL、仓库根与本目录 `.env` 已配置、已安装 grpcurl；
+脚本自行编译并启动服务（50051 端口需空闲），结束自动停止并清理 `e2e_*` 测试用户。
+
 ## 本地调试（grpcurl）
 
 ```bash
