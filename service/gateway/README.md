@@ -1,14 +1,15 @@
 # Gateway 服务
 
-API 网关入口：请求路由分发、认证鉴权、限流熔断、请求/响应日志（HTTP 框架选型 Hertz）。
+API 网关入口：请求路由分发、access token 本地验签、双维度令牌桶限流、请求/响应日志（HTTP 框架 Hertz）。
 详细说明见 [docs/architecture.md](docs/architecture.md)。
 
-> 当前状态：目录骨架，尚未实现。实现时在 `cmd/server` 下编写 main 包，并在 `Taskfile.yml` 的 `PORT` / `CONTAINER_PORT` 中填写端口。
+> 当前状态：第一期已实现（Hertz 骨架 + 验签 + 限流 + user 服务 5 个 RPC 的 HTTP 转发）。
+> 配置必填项：`jwt.secret`（与 user 服务共享，建议 `GANRAG_JWT_SECRET` 环境变量注入）。
 
 ## Task 命令
 
 本服务的构建与运行由 Task 管理，脚本位于本服务 `scripts/` 目录（各服务独立维护，互不引用）。
-实现完成后以下命令即可直接使用：
+以下命令即可直接使用：
 
 ```bash
 task build                          # 编译到 bin/server-linux-amd64（默认 linux/amd64）
@@ -29,5 +30,3 @@ task build-image -- gateway
 task run -- gateway --detach
 task stop
 ```
-
-服务未实现时，build / build-image / run 会提示并跳过，不报错。

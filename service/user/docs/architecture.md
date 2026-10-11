@@ -285,7 +285,7 @@ services:
 
 | 服务 | 端口 | 协议 | 状态 |
 |------|------|------|------|
-| gateway | 8080 | HTTP | 未实现 |
+| gateway | 8080 | HTTP | 已实现（2026-10-11） |
 | user | 50051 | gRPC | 已实现（2026-10-09） |
 | repository | 50052 | gRPC | 未实现 |
 | vector-store | 50053 | gRPC | 已实现 |

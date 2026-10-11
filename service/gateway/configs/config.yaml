@@ -1,0 +1,33 @@
+# Gateway 服务配置
+#
+# 环境变量覆盖示例（前缀 GANRAG_，嵌套用下划线）：
+#   GANRAG_SERVER_PORT=8080
+#   GANRAG_JWT_SECRET=xxx            # 必填：与 user 服务共享的验签密钥
+#   GANRAG_UPSTREAM_USER=ganrag-user:50051  # 容器网络内用容器名访问 user 服务
+
+server:
+  host: "0.0.0.0"   # HTTP 监听地址
+  port: 8080        # HTTP 监听端口（架构文档端口规划）
+
+jwt:
+  secret: ""        # 必填，与 user 服务签发密钥相同，建议 GANRAG_JWT_SECRET 环境变量注入
+  issuer: "ganrag"  # 期望的签发方（校验 iss 声明）
+
+upstream:
+  user: "127.0.0.1:50051"   # user 服务 gRPC 地址（容器内：ganrag-user:50051）
+
+rate_limit:
+  # /api/v1/auth/* 注册登录刷新：匿名访问且是爆破目标，从严
+  auth:
+    qps: 1           # 平均每秒 1 个请求
+    burst: 5         # 突发桶容量 5
+  # 其余需验签的业务路由（按 user_id 分桶）
+  default:
+    qps: 10          # 平均每秒 10 个请求
+    burst: 20        # 突发桶容量 20
+
+log:
+  output: "both"     # console | file | both
+  level: "info"      # debug | info | warn | error
+  format: "text"     # json | text
+  directory: "./logs"

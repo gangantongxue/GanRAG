@@ -17,3 +17,49 @@ Hertz 是字节跳动开源的高性能 HTTP 框架，具有以下特点：
 - 认证鉴权
 - 限流熔断
 - 请求/响应日志
+
+> 当前实现范围（第一期）：路由分发、access token 本地验签、限流、请求/响应日志。
+> 熔断与负载均衡等待下游多实例部署后按需添加（YAGNI）。
+
+## 中间件链路
+
+```
+请求 ──▶ panic 恢复（server.Default 内置）
+      ──▶ 访问日志（方法/路径/状态码/耗时/IP）
+      ├─ /api/v1/auth/*  ──▶ auth 限流（匿名按 IP 分桶，1 QPS / 突发 5）
+      │                      └──▶ 转发 handler ──▶ user 服务 gRPC
+      └─ /api/v1/*       ──▶ access token 本地验签（注入 user_id）
+                             ──▶ 默认限流（按 user_id 分桶，10 QPS / 突发 20）
+                             ──▶ 转发 handler ──▶ user 服务 gRPC
+```
+
+- 验签：golang-jwt/jwt/v5 HS256 本地校验（共享密钥、校验 iss/exp），**零回源** user 服务
+- 限流：golang.org/x/time/rate 令牌桶；已登录按 user_id 分桶（多端共享额度），匿名按客户端 IP 分桶；闲置桶超 10 分钟自动回收
+- 顺序：验签在限流之前，保证限流能按用户维度分桶
+
+## 接口设计
+
+响应格式：
+- 成功：HTTP 200 + protojson 直出 gRPC 响应（字段为 proto 的 JSON 名称），前端字段与 proto 定义一一对应
+- 失败：统一错误体 `{"code": <HTTP 状态码>, "message": <可展示信息>}`，错误细节只写日志
+
+| 方法 | 路径 | 认证 | 转发 RPC |
+|------|------|------|----------|
+| POST | `/api/v1/auth/register` | 公开 | UserService.Register |
+| POST | `/api/v1/auth/login` | 公开 | UserService.Login |
+| POST | `/api/v1/auth/refresh` | **绕过 access 校验**（user 架构文档硬性要求） | UserService.Refresh |
+| GET | `/api/v1/users/me` | Bearer access token | UserService.GetUser（id 取自 token） |
+| PUT | `/api/v1/users/me/password` | Bearer access token | UserService.UpdatePassword（user_id 取自 token） |
+
+gRPC 状态码 → HTTP 状态码映射：
+
+| gRPC | HTTP | gRPC | HTTP |
+|------|------|------|------|
+| InvalidArgument | 400 | FailedPrecondition | 412 |
+| Unauthenticated | 401 | AlreadyExists / Aborted | 409 |
+| PermissionDenied | 403 | ResourceExhausted | 429 |
+| NotFound | 404 | Unavailable / DeadlineExceeded | 502 |
+| Internal / 其他 | 500 | 超限（网关自身） | 429 |
+
+- token 中的 `sub`（用户 ID）由验签中间件注入请求上下文，**不信任任何请求体/查询参数**
+- 非 gRPC 状态错误（连接失败等）返回 502，不回传下游细节
