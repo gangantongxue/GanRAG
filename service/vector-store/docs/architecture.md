@@ -65,7 +65,7 @@ service VectorStore {
   - `cmd/server`：服务入口（配置加载、日志初始化、优雅退出）
   - `internal/config`：配置结构、校验与类型转换
   - `internal/store`：chromem-go 封装（集合管理、写入、检索、删除）
-  - `internal/server`：gRPC handler 与错误码映射、服务生命周期
+  - `internal/server`：gRPC handler（错误码映射统一走 `pkg/errcode`）、服务生命周期
 - 存储模式（`configs/config.yaml` 的 `storage.mode`）：
   - `persistent`（默认）：写入同步落盘，进程重启后自动加载
   - `memory`：内存模式，进程退出后数据丢失，适合开发调试

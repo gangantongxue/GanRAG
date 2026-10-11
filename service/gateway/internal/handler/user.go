@@ -16,6 +16,7 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	userv1 "github.com/gangantongxue/GanRAG/api/gen/user/v1"
+	"github.com/gangantongxue/GanRAG/pkg/errcode"
 	"github.com/gangantongxue/GanRAG/service/gateway/pkg/auth"
 )
 
@@ -204,36 +205,6 @@ func (h *UserHandler) writeRPCError(c *app.RequestContext, err error, op string)
 		writeError(c, 502, "下游服务不可用")
 	default:
 		// 业务错误（参数不合法、未认证、冲突等）：message 由 user 服务设计为可直接展示
-		writeError(c, httpStatus(st.Code()), st.Message())
-	}
-}
-
-// httpStatus 将 gRPC status code 映射为 HTTP 状态码
-//
-// 参数：
-//   - code: gRPC 状态码
-//
-// 返回：
-//   - int: 对应的 HTTP 状态码，未知码归为 500
-func httpStatus(code codes.Code) int {
-	switch code {
-	case codes.InvalidArgument:
-		return 400
-	case codes.Unauthenticated:
-		return 401
-	case codes.PermissionDenied:
-		return 403
-	case codes.NotFound:
-		return 404
-	case codes.AlreadyExists, codes.Aborted:
-		return 409
-	case codes.FailedPrecondition:
-		return 412
-	case codes.ResourceExhausted:
-		return 429
-	case codes.Unavailable:
-		return 502
-	default:
-		return 500
+		writeError(c, errcode.HTTPStatus(st.Code()), st.Message())
 	}
 }

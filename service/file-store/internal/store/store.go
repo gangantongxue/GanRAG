@@ -26,6 +26,9 @@ import (
 	"sync"
 	"time"
 
+	"google.golang.org/grpc/codes"
+
+	"github.com/gangantongxue/GanRAG/pkg/errcode"
 	"github.com/gangantongxue/GanRAG/service/file-store/internal/config"
 )
 
@@ -38,12 +41,13 @@ const metaDirName = "meta"
 // defaultContentType 上传未指定 MIME 类型时的缺省值
 const defaultContentType = "application/octet-stream"
 
-// 哨兵错误：handler 通过 errors.Is 判断并映射为对应 gRPC 状态码
+// 哨兵错误：错误自带 gRPC 状态码，handler 统一走 errcode.Status 归一化
+// （映射逻辑见 pkg/errcode，禁止在服务内另行定义错误码映射）
 var (
-	// ErrInvalidArgument 入参不合法（映射 codes.InvalidArgument）
-	ErrInvalidArgument = errors.New("参数不合法")
-	// ErrNotFound 文件不存在（映射 codes.NotFound）
-	ErrNotFound = errors.New("文件不存在")
+	// ErrInvalidArgument 入参不合法（codes.InvalidArgument）
+	ErrInvalidArgument = errcode.New(codes.InvalidArgument, "参数不合法")
+	// ErrNotFound 文件不存在（codes.NotFound）
+	ErrNotFound = errcode.New(codes.NotFound, "文件不存在")
 )
 
 // bucketNameRe bucket 命名规则：仅允许字母数字与 - _

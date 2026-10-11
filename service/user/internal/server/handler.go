@@ -11,12 +11,12 @@ import (
 
 	userv1 "github.com/gangantongxue/GanRAG/api/gen/user/v1"
 	dbmodel "github.com/gangantongxue/GanRAG/pkg/db/model/ganrag_user"
+	"github.com/gangantongxue/GanRAG/pkg/errcode"
 	"github.com/gangantongxue/GanRAG/service/user/internal/auth"
 	"github.com/gangantongxue/GanRAG/service/user/internal/config"
 	"github.com/gangantongxue/GanRAG/service/user/internal/store"
 
 	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
 )
 
 // usernameRe 用户名格式：3-32 字符，仅允许字母、数字、_、-
@@ -26,6 +26,23 @@ var usernameRe = regexp.MustCompile(`^[a-zA-Z0-9_-]{3,32}$`)
 const (
 	minPasswordLen = 8
 	maxPasswordLen = 64
+)
+
+// 上下文相关业务错误：同一个 store 哨兵错误在不同 RPC 有不同对外契约时的覆盖值
+// （如登录防用户名枚举）。错误码统一由 pkg/errcode 定义，不要在服务内另行发明映射。
+var (
+	// errInvalidCredentials 登录失败（用户不存在与密码错误同消息，防用户名枚举）
+	errInvalidCredentials = errcode.New(codes.Unauthenticated, "用户名或密码错误")
+	// errAuthFailed 改密时 token 中的 user_id 已失效（凭证陈旧），统一按认证失败处理
+	errAuthFailed = errcode.New(codes.Unauthenticated, "认证失败")
+	// errTokenInvalid refresh token 无效（伪造 / 作废 / 关联用户不存在，不区分细节防探测）
+	errTokenInvalid = errcode.New(codes.Unauthenticated, "refresh token 无效")
+	// errTokenExpired refresh token 自然过期
+	errTokenExpired = errcode.New(codes.Unauthenticated, "refresh token 已过期")
+	// errOldPasswordWrong 改密时旧密码错误
+	errOldPasswordWrong = errcode.New(codes.Unauthenticated, "旧密码错误")
+	// errUserDisabled 账号被禁用
+	errUserDisabled = errcode.New(codes.FailedPrecondition, "账号已被禁用")
 )
 
 // Handler 实现 userv1.UserServiceServer
@@ -55,26 +72,22 @@ func NewHandler(st *store.Store, jwt config.JWTConfig, log *slog.Logger) *Handle
 // 错误码：InvalidArgument 参数不合法；AlreadyExists 用户名已存在。
 func (h *Handler) Register(ctx context.Context, req *userv1.RegisterRequest) (*userv1.RegisterResponse, error) {
 	if !usernameRe.MatchString(req.Username) {
-		return nil, status.Error(codes.InvalidArgument, "用户名须为 3-32 位字母、数字、_ 或 -")
+		return nil, errcode.InvalidArgument("用户名须为 3-32 位字母、数字、_ 或 -")
 	}
 	if !validPassword(req.Password) {
-		return nil, status.Error(codes.InvalidArgument, "密码须为 8-64 字符")
+		return nil, errcode.InvalidArgument("密码须为 8-64 字符")
 	}
 	// bcrypt 对超过 72 字节的密码报错，这里提前归为参数不合法
 	hash, err := auth.HashPassword(req.Password)
 	if err != nil {
 		h.log.Warn("注册密码哈希失败", "err", err)
-		return nil, status.Error(codes.InvalidArgument, "密码不合法")
+		return nil, errcode.InvalidArgument("密码不合法")
 	}
 
-	// 首期昵称默认等于用户名
+	// 首期昵称默认等于用户名；ErrUsernameTaken 由 errcode.Status 自动映射 AlreadyExists
 	u, err := h.st.CreateUser(ctx, req.Username, hash, req.Username)
 	if err != nil {
-		if errors.Is(err, store.ErrUsernameTaken) {
-			return nil, status.Error(codes.AlreadyExists, "用户名已存在")
-		}
-		h.log.Error("注册失败", "err", err)
-		return nil, status.Error(codes.Internal, "内部错误")
+		return nil, errcode.Status(h.log, "Register", err)
 	}
 	return &userv1.RegisterResponse{User: userToProto(u)}, nil
 }
@@ -85,25 +98,24 @@ func (h *Handler) Register(ctx context.Context, req *userv1.RegisterRequest) (*u
 // 错误码：Unauthenticated 凭证无效；FailedPrecondition 用户被禁用。
 func (h *Handler) Login(ctx context.Context, req *userv1.LoginRequest) (*userv1.LoginResponse, error) {
 	if req.Username == "" || req.Password == "" {
-		return nil, status.Error(codes.InvalidArgument, "用户名和密码不能为空")
+		return nil, errcode.InvalidArgument("用户名和密码不能为空")
 	}
 
 	u, err := h.st.GetUserByUsername(ctx, req.Username)
 	if err != nil {
+		// 覆盖 NotFound 契约：与密码错误返回同一错误，避免暴露「该用户名不存在」
 		if errors.Is(err, store.ErrUserNotFound) {
-			// 与密码错误返回同一错误，避免暴露「该用户名不存在」
 			h.log.Warn("登录失败：用户不存在", "username", req.Username)
-			return nil, status.Error(codes.Unauthenticated, "用户名或密码错误")
+			return nil, errInvalidCredentials
 		}
-		h.log.Error("登录查询用户失败", "err", err)
-		return nil, status.Error(codes.Internal, "内部错误")
+		return nil, errcode.Status(h.log, "Login", err)
 	}
 	if !auth.CheckPassword(u.PasswordHash, req.Password) {
 		h.log.Warn("登录失败：密码错误", "username", req.Username)
-		return nil, status.Error(codes.Unauthenticated, "用户名或密码错误")
+		return nil, errInvalidCredentials
 	}
 	if u.Status == store.StatusDisabled {
-		return nil, status.Error(codes.FailedPrecondition, "账号已被禁用")
+		return nil, errUserDisabled
 	}
 
 	// 生成双 token 并保存 refresh 记录（惰性过期清理在 CreateRefreshToken 事务内）
@@ -112,8 +124,7 @@ func (h *Handler) Login(ctx context.Context, req *userv1.LoginRequest) (*userv1.
 		return nil, err
 	}
 	if err := h.st.CreateRefreshToken(ctx, u.ID, auth.HashRefreshToken(pair.refresh), time.Now().Add(h.jwt.RefreshTTL)); err != nil {
-		h.log.Error("保存 refresh token 失败", "err", err)
-		return nil, status.Error(codes.Internal, "内部错误")
+		return nil, errcode.Status(h.log, "Login/保存 refresh token", err)
 	}
 	return &userv1.LoginResponse{
 		User:             userToProto(u),
@@ -130,16 +141,13 @@ func (h *Handler) Login(ctx context.Context, req *userv1.LoginRequest) (*userv1.
 // 错误码：Unauthenticated 过期 / 作废 / 重用 / 伪造；FailedPrecondition 用户被禁用。
 func (h *Handler) Refresh(ctx context.Context, req *userv1.RefreshRequest) (*userv1.RefreshResponse, error) {
 	if req.RefreshToken == "" {
-		return nil, status.Error(codes.InvalidArgument, "refresh token 不能为空")
+		return nil, errcode.InvalidArgument("refresh token 不能为空")
 	}
 
+	// ErrRefreshNotFound 由 errcode.Status 自动映射 Unauthenticated + "refresh token 无效"
 	tok, err := h.st.GetRefreshToken(ctx, auth.HashRefreshToken(req.RefreshToken))
 	if err != nil {
-		if errors.Is(err, store.ErrRefreshNotFound) {
-			return nil, status.Error(codes.Unauthenticated, "refresh token 无效")
-		}
-		h.log.Error("查询 refresh token 失败", "err", err)
-		return nil, status.Error(codes.Internal, "内部错误")
+		return nil, errcode.Status(h.log, "Refresh/查询 token", err)
 	}
 
 	// 重用检测：已作废（被轮换或吊销）的 token 再次出现，视为泄露
@@ -148,23 +156,23 @@ func (h *Handler) Refresh(ctx context.Context, req *userv1.RefreshRequest) (*use
 		if err := h.st.RevokeAllRefreshTokens(ctx, tok.UserID); err != nil {
 			h.log.Error("吊销用户 refresh token 失败", "err", err)
 		}
-		return nil, status.Error(codes.Unauthenticated, "refresh token 无效")
+		return nil, errTokenInvalid
 	}
 	// 自然过期：正常拒绝（惰性清理交由该用户下次登录/刷新时执行）
 	if !tok.ExpiresAt.After(time.Now()) {
-		return nil, status.Error(codes.Unauthenticated, "refresh token 已过期")
+		return nil, errTokenExpired
 	}
 
 	u, err := h.st.GetUserByID(ctx, tok.UserID)
 	if err != nil {
+		// 覆盖 NotFound 契约：关联用户已不存在时，对外仍按 token 无效处理
 		if errors.Is(err, store.ErrUserNotFound) {
-			return nil, status.Error(codes.Unauthenticated, "refresh token 无效")
+			return nil, errTokenInvalid
 		}
-		h.log.Error("刷新时查询用户失败", "err", err)
-		return nil, status.Error(codes.Internal, "内部错误")
+		return nil, errcode.Status(h.log, "Refresh/查询用户", err)
 	}
 	if u.Status == store.StatusDisabled {
-		return nil, status.Error(codes.FailedPrecondition, "账号已被禁用")
+		return nil, errUserDisabled
 	}
 
 	// 生成新 token 对（不落库），轮换事务负责「作废旧记录 + 写入新记录 + 惰性清理」
@@ -173,16 +181,15 @@ func (h *Handler) Refresh(ctx context.Context, req *userv1.RefreshRequest) (*use
 		return nil, err
 	}
 	if err := h.st.RotateRefreshToken(ctx, tok, auth.HashRefreshToken(pair.refresh), time.Now().Add(h.jwt.RefreshTTL)); err != nil {
+		// 并发重用兜底：同样吊销全部
 		if errors.Is(err, store.ErrRefreshRevoked) {
-			// 并发重用兜底：同样吊销全部
 			h.log.Warn("并发 refresh 重用，吊销该用户全部 token", "user_id", tok.UserID)
 			if rerr := h.st.RevokeAllRefreshTokens(ctx, tok.UserID); rerr != nil {
 				h.log.Error("吊销用户 refresh token 失败", "err", rerr)
 			}
-			return nil, status.Error(codes.Unauthenticated, "refresh token 无效")
+			return nil, errTokenInvalid
 		}
-		h.log.Error("轮换 refresh token 失败", "err", err)
-		return nil, status.Error(codes.Internal, "内部错误")
+		return nil, errcode.Status(h.log, "Refresh/轮换 token", err)
 	}
 
 	return &userv1.RefreshResponse{
@@ -198,15 +205,12 @@ func (h *Handler) Refresh(ctx context.Context, req *userv1.RefreshRequest) (*use
 // 错误码：InvalidArgument id 缺失；NotFound 目标不存在。
 func (h *Handler) GetUser(ctx context.Context, req *userv1.GetUserRequest) (*userv1.GetUserResponse, error) {
 	if req.Id <= 0 {
-		return nil, status.Error(codes.InvalidArgument, "缺少用户 ID")
+		return nil, errcode.InvalidArgument("缺少用户 ID")
 	}
+	// ErrUserNotFound 由 errcode.Status 自动映射 NotFound + "用户不存在"
 	u, err := h.st.GetUserByID(ctx, req.Id)
 	if err != nil {
-		if errors.Is(err, store.ErrUserNotFound) {
-			return nil, status.Error(codes.NotFound, "用户不存在")
-		}
-		h.log.Error("查询用户失败", "err", err)
-		return nil, status.Error(codes.Internal, "内部错误")
+		return nil, errcode.Status(h.log, "GetUser", err)
 	}
 	return &userv1.GetUserResponse{User: userToProto(u)}, nil
 }
@@ -218,37 +222,37 @@ func (h *Handler) GetUser(ctx context.Context, req *userv1.GetUserRequest) (*use
 // Unauthenticated 旧密码错误或用户不存在（user_id 来自 token，失效说明凭证陈旧）。
 func (h *Handler) UpdatePassword(ctx context.Context, req *userv1.UpdatePasswordRequest) (*userv1.UpdatePasswordResponse, error) {
 	if req.UserId <= 0 {
-		return nil, status.Error(codes.InvalidArgument, "缺少用户 ID")
+		return nil, errcode.InvalidArgument("缺少用户 ID")
 	}
 	if !validPassword(req.NewPassword) {
-		return nil, status.Error(codes.InvalidArgument, "新密码须为 8-64 字符")
+		return nil, errcode.InvalidArgument("新密码须为 8-64 字符")
 	}
 
 	u, err := h.st.GetUserByID(ctx, req.UserId)
 	if err != nil {
+		// 覆盖 NotFound 契约：token 里的 user_id 已失效，按认证失败处理
 		if errors.Is(err, store.ErrUserNotFound) {
 			h.log.Warn("改密失败：用户不存在", "user_id", req.UserId)
-			return nil, status.Error(codes.Unauthenticated, "认证失败")
+			return nil, errAuthFailed
 		}
-		h.log.Error("改密查询用户失败", "err", err)
-		return nil, status.Error(codes.Internal, "内部错误")
+		return nil, errcode.Status(h.log, "UpdatePassword/查询用户", err)
 	}
 	if !auth.CheckPassword(u.PasswordHash, req.OldPassword) {
 		h.log.Warn("改密失败：旧密码错误", "user_id", req.UserId)
-		return nil, status.Error(codes.Unauthenticated, "旧密码错误")
+		return nil, errOldPasswordWrong
 	}
 
 	hash, err := auth.HashPassword(req.NewPassword)
 	if err != nil {
 		h.log.Warn("改密密码哈希失败", "err", err)
-		return nil, status.Error(codes.InvalidArgument, "新密码不合法")
+		return nil, errcode.InvalidArgument("新密码不合法")
 	}
 	if err := h.st.UpdatePassword(ctx, req.UserId, hash); err != nil {
 		if errors.Is(err, store.ErrUserNotFound) {
-			return nil, status.Error(codes.Unauthenticated, "认证失败")
+			h.log.Warn("改密失败：用户不存在", "user_id", req.UserId)
+			return nil, errAuthFailed
 		}
-		h.log.Error("改密失败", "err", err)
-		return nil, status.Error(codes.Internal, "内部错误")
+		return nil, errcode.Status(h.log, "UpdatePassword", err)
 	}
 	return &userv1.UpdatePasswordResponse{}, nil
 }
@@ -266,13 +270,11 @@ type tokenPair struct {
 func (h *Handler) newPair(u *dbmodel.User) (*tokenPair, error) {
 	refresh, err := auth.NewRefreshToken()
 	if err != nil {
-		h.log.Error("生成 refresh token 失败", "err", err)
-		return nil, status.Error(codes.Internal, "内部错误")
+		return nil, errcode.Status(h.log, "生成 refresh token", err)
 	}
 	access, err := auth.IssueAccessToken(h.jwt.Secret, h.jwt.Issuer, h.jwt.AccessTTL, u.ID, u.Username)
 	if err != nil {
-		h.log.Error("签发 access token 失败", "err", err)
-		return nil, status.Error(codes.Internal, "内部错误")
+		return nil, errcode.Status(h.log, "签发 access token", err)
 	}
 	return &tokenPair{access: access, refresh: refresh}, nil
 }

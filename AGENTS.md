@@ -35,3 +35,13 @@ AI 不得：
 - **可修改**（版本 > 当前版本，即尚未应用）的文件才可以调整内容
 - 迁移同步与代码生成：`task db-up`（同步到最新）、`task db-gen`（同步后用 gorm gen 生成 model/query）
 - 修改表结构后必须重新执行 `task db-gen` 并提交生成代码
+
+## 错误码规范
+
+业务错误与错误码**统一使用 `pkg/errcode`**（规范详见 [pkg/errcode/README.md](pkg/errcode/README.md)）。
+
+- **禁止**在各服务内自行定义错误码映射（如手写 `errors.Is` + `status.Error(codes.X, ...)` 映射表）
+- store 层哨兵错误一律用 `errcode.New(codes.X, "消息")` 定义（错误自带 gRPC 状态码）
+- handler 返回错误统一走 `errcode.Status(h.log, op, err)` 归一化；一次性校验用 `errcode.InvalidArgument(msg)`，内部错误用 `errcode.Internal()`
+- gRPC → HTTP 状态码转换（Gateway）统一用 `errcode.HTTPStatus(code)`
+- **新增错误码在 `pkg/errcode`（通用）或服务 `internal/store` 哨兵处用 `New` 声明**，不要复制状态码字面量

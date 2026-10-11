@@ -5,19 +5,21 @@
 package store
 
 import (
-	"errors"
-
+	"google.golang.org/grpc/codes"
 	"gorm.io/gorm"
 
 	dbquery "github.com/gangantongxue/GanRAG/pkg/db/query/ganrag_user"
+	"github.com/gangantongxue/GanRAG/pkg/errcode"
 )
 
-// 业务哨兵错误：调用方用 errors.Is 判定并映射为 gRPC 错误码
+// 业务哨兵错误：错误自带 gRPC 状态码，handler 统一走 errcode.Status 归一化
+// （同一错误在不同 RPC 有契约分歧时由 handler 覆盖，见 server 包上下文错误变量；
+// 映射逻辑统一在 pkg/errcode，禁止在服务内另行定义错误码映射）
 var (
-	ErrUserNotFound    = errors.New("用户不存在")             // 按 ID / 用户名均未命中
-	ErrUsernameTaken   = errors.New("用户名已存在")            // 注册时用户名冲突
-	ErrRefreshNotFound = errors.New("refresh token 不存在") // 哈希未命中（伪造 token）
-	ErrRefreshRevoked  = errors.New("refresh token 已作废") // revoked_at 非空（重用检测信号）
+	ErrUserNotFound    = errcode.New(codes.NotFound, "用户不存在")                   // 按 ID / 用户名均未命中
+	ErrUsernameTaken   = errcode.New(codes.AlreadyExists, "用户名已存在")             // 注册时用户名冲突
+	ErrRefreshNotFound = errcode.New(codes.Unauthenticated, "refresh token 无效") // 哈希未命中（伪造 token）
+	ErrRefreshRevoked  = errcode.New(codes.Unauthenticated, "refresh token 无效") // revoked_at 非空（重用检测信号）
 )
 
 // 用户状态常量（对应 users.status 列）

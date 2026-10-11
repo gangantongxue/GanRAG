@@ -214,6 +214,8 @@ data/file-store/                # storage.path
 
 ### 错误码
 
+> 错误码统一定义与映射见 [pkg/errcode](../../../pkg/errcode/README.md)，服务内不自行定义。
+
 | 状态码 | 触发条件 |
 |--------|----------|
 | `NotFound` | `Download` / `Delete` / `GetMetadata` 目标不存在 |

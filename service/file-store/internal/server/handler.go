@@ -3,13 +3,10 @@ package server
 
 import (
 	"context"
-	"errors"
 	"log/slog"
 
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
-
 	filestorev1 "github.com/gangantongxue/GanRAG/api/gen/file-store/v1"
+	"github.com/gangantongxue/GanRAG/pkg/errcode"
 	"github.com/gangantongxue/GanRAG/service/file-store/internal/store"
 )
 
@@ -83,8 +80,8 @@ func (h *Handler) List(_ context.Context, req *filestorev1.ListRequest) (*filest
 
 // toStatus 将 store 层错误映射为 gRPC 状态错误
 //
-// 已知的哨兵错误映射为对应状态码，未知错误记录日志后统一返回 Internal，
-// 避免把内部错误细节暴露给调用方。
+// 统一委托 pkg/errcode.Status：自带状态码的哨兵错误按其码转换，
+// 未知错误记录日志后统一返回 Internal，避免暴露内部错误细节。
 // 消息体超过服务端 16MB 接收上限的情况由 gRPC 框架直接返回 ResourceExhausted，
 // 不会进入 handler。
 //
@@ -95,15 +92,7 @@ func (h *Handler) List(_ context.Context, req *filestorev1.ListRequest) (*filest
 // 返回：
 //   - error: gRPC 状态错误
 func (h *Handler) toStatus(method string, err error) error {
-	switch {
-	case errors.Is(err, store.ErrNotFound):
-		return status.Error(codes.NotFound, err.Error())
-	case errors.Is(err, store.ErrInvalidArgument):
-		return status.Error(codes.InvalidArgument, err.Error())
-	default:
-		h.log.Error("处理请求失败", "method", method, "err", err)
-		return status.Error(codes.Internal, "服务内部错误")
-	}
+	return errcode.Status(h.log, method, err)
 }
 
 // toProtoMetadata 将 store.Metadata 转换为 proto FileMetadata

@@ -160,6 +160,8 @@ message UpdatePasswordResponse {}
 
 ### 约束与错误码
 
+> 错误码统一定义与映射见 [pkg/errcode](../../../pkg/errcode/README.md)，服务内不自行定义（含防枚举覆盖错误）。
+
 | RPC | 约束 | 错误码 |
 |-----|------|--------|
 | Register | 用户名 3-32 字符（`[a-zA-Z0-9_-]`）、密码 8-64 字符 | `InvalidArgument` 参数不合法；`AlreadyExists` 用户名已存在 |

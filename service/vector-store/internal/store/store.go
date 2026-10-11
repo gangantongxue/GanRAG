@@ -16,20 +16,23 @@ import (
 	"sync"
 
 	"github.com/philippgille/chromem-go"
+	"google.golang.org/grpc/codes"
 
+	"github.com/gangantongxue/GanRAG/pkg/errcode"
 	"github.com/gangantongxue/GanRAG/service/vector-store/internal/config"
 )
 
-// 哨兵错误：handler 通过 errors.Is 判断并映射为对应 gRPC 状态码
+// 哨兵错误：错误自带 gRPC 状态码，handler 统一走 errcode.Status 归一化
+// （映射逻辑见 pkg/errcode，禁止在服务内另行定义错误码映射）
 var (
-	// ErrInvalidArgument 入参不合法（映射 codes.InvalidArgument）
-	ErrInvalidArgument = errors.New("参数不合法")
-	// ErrCollectionNotFound 集合不存在（映射 codes.NotFound）
-	ErrCollectionNotFound = errors.New("集合不存在")
-	// ErrCollectionExists 集合已存在（映射 codes.AlreadyExists）
-	ErrCollectionExists = errors.New("集合已存在")
-	// ErrDocumentNotFound 文档不存在（映射 codes.NotFound）
-	ErrDocumentNotFound = errors.New("文档不存在")
+	// ErrInvalidArgument 入参不合法（codes.InvalidArgument）
+	ErrInvalidArgument = errcode.New(codes.InvalidArgument, "参数不合法")
+	// ErrCollectionNotFound 集合不存在（codes.NotFound）
+	ErrCollectionNotFound = errcode.New(codes.NotFound, "集合不存在")
+	// ErrCollectionExists 集合已存在（codes.AlreadyExists）
+	ErrCollectionExists = errcode.New(codes.AlreadyExists, "集合已存在")
+	// ErrDocumentNotFound 文档不存在（codes.NotFound）
+	ErrDocumentNotFound = errcode.New(codes.NotFound, "文档不存在")
 )
 
 // errEmbeddingNotSupported 表示本服务不接受"由存储端生成向量"

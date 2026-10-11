@@ -150,6 +150,8 @@ message ListResponse {
 
 ### 约束与错误码
 
+> 错误码统一定义与映射见 [pkg/errcode](../../../pkg/errcode/README.md)，服务内不自行定义。
+
 | 规则 | 说明 |
 |------|------|
 | key 校验 | 必填、非空；禁止 `..` 路径穿越、禁止以 `/` 开头、禁止包含 `\`；允许 `/` 分层（实现时用 `filepath.Clean` 后二次校验仍在 bucket 根内） |
