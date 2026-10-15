@@ -171,14 +171,15 @@ Go 标准库结构化日志 + 日志文件轮转：
 
 > 已定稿但尚未实现的设计汇总。**实现完成时更新状态、新增设计文档必须登记于此**，防止文档与代码脱节。
 > 状态图例：📝 设计定稿未实现 / 🔨 实现中 / ✅ 已实现。
+> **执行跟踪以 [docs/fix.md](fix.md) / [docs/todo.md](todo.md) 为准**（对应编号见「详见」列）；本表只负责设计文档状态，不再另立待办清单。
 
 | 设计项 | 状态 | 阶段 | 详见 |
 |--------|------|------|------|
-| 多智能体路由与切换（Laya） | 📝 设计定稿，代码未实现 | P1.5 | [service/ai/docs/architecture.md](../../service/ai/docs/architecture.md) |
-| 上下文压缩（会话级 context + 消息游标） | 📝 设计定稿，代码未实现 | P1.5 | [service/ai/docs/architecture.md](../../service/ai/docs/architecture.md)、[data-model.md](data-model.md) |
-| 文档上传（pdf / docx / html → markitdown） | 📝 设计定稿，代码未实现 | P1.5 | 本文「文档转换」、[product.md](product.md) |
-| 向量化按模型存储与检索路由 | 📝 设计定稿，代码未实现 | P1.5 | [service/vector-store/docs/architecture.md](../../service/vector-store/docs/architecture.md) |
-| chat_sessions.agent / context / context_msg_id 字段 | 🗄 表结构已设计，随 P1 建表落地 | P1 | [data-model.md](data-model.md) |
+| 多智能体路由与切换（Laya） | 📝 设计定稿，代码未实现 | P1.5 | [service/ai/docs/architecture.md](../../service/ai/docs/architecture.md)（TODO-003） |
+| 上下文压缩（会话级 context + 消息游标） | 📝 设计定稿，代码未实现 | P1.5 | [service/ai/docs/architecture.md](../../service/ai/docs/architecture.md)、[data-model.md](data-model.md)（TODO-004） |
+| 文档上传（pdf / docx / html → markitdown） | 📝 设计定稿，代码未实现 | P1.5 | 本文「文档转换」、[product.md](product.md)（TODO-005） |
+| 向量化按模型存储与检索路由 | 📝 设计定稿，代码未实现 | P1.5 | [service/vector-store/docs/architecture.md](../../service/vector-store/docs/architecture.md)（TODO-006） |
+| chat_sessions.agent / context / context_msg_id 字段 | 🗄 表结构已设计，随 P1 建表落地 | P1 | [data-model.md](data-model.md)（TODO-002） |
 
 ## 决策记录
 
@@ -212,3 +213,7 @@ Go 标准库结构化日志 + 日志文件轮转：
 | 2026-10-15 | 模型上下文采用「会话级 context + 消息游标」替换式压缩，不落消息表 | 消息表保持纯对话，模型上下文结构性不进用户页面；多次压缩直接替换无堆积；原文不删、search_context 仍可溯；详见 docs/data-model.md |
 | 2026-10-15 | 向量化结果按「知识库 × 向量化模型」分集合存储（`kb-<kb_id>-<model_id>`），检索按模型路由 | 不同模型维度不同、同集合维度必须一致，只能分集合；切换模型全量重建新集合、旧集合保留期可回滚；详见 service/vector-store/docs/architecture.md |
 | 2026-10-15 | 文档新增「设计落地状态」聚合表 + 各设计章节就近状态标注 | 已定稿未实现的设计集中登记，防止文档与代码状态脱节；实现时必须同步更新 |
+| 2026-10-15 | 数据库禁止物理外键，一律逻辑引用；建立 docs/fix.md / docs/todo.md 待完成登记制度 | 外键耦合迁移、违背服务独立；待完成事项统一登记跟踪，防止文档与代码脱节；详见根 AGENTS.md「数据库设计规范」「待完成事项管理」 |
+| 2026-10-15 | 登录标识改邮箱（email 唯一，username 降为可重复展示名、删 nickname）；refresh_tokens 改 sessions 会话表（每设备一行，多端登录 + 设备管理）；引入 Redis 存邮箱验证码（注册/找回密码） | 登录/找回密码统一走邮箱；会话按设备建模支撑设备管理；验证码的过期与一次性语义由 Redis 天然承担不建表；详见 docs/data-model.md、service/user/docs/architecture.md |
+| 2026-10-15 | repository 数据库重设计（8 表→5 表）：正文与转换结果存 file-store（`articles.content_key`）、MySQL 不存内容；文章互链不建表即 Markdown 链接；对外实体加 XID 业务主键；附件挂 article_id 吸收绑定表；kb_members+kb_stars 合并 kb_user_relations | 内容是大对象不占 MySQL 行、重建索引免重跑转换；关联即正文本身不需关系表；自增 id 不出服务防遍历；表少口径清；覆盖 2026-10-09「前端渲染统一走 content」口径（改为 pdf/docx/html 展示源文件、content 仅供向量化/AI）；详见 docs/data-model.md「ganrag_repository」、根 AGENTS.md「业务主键（XID）规范」 |
+| 2026-10-15 | 聊天记录按「消息信封 + 全量步骤」存储（chat_messages + chat_message_parts），步骤 type/meta 对齐 Vercel AI SDK `UIMessage` part 模型、payload 原样存；消息加 xid、步骤不加；聊天交易型短文本入 MySQL | 每步（思考/工具调用/来源）全量存储支撑任意后加展示、扩展零 DDL；历史无损重组喂 useChat(initialMessages)，工具/思考/来源原生展示；RAG 来源存 article_xid 点击跳文章；详见 docs/data-model.md「ganrag_ai」 |

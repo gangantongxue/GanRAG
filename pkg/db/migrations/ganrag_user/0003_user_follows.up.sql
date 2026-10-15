@@ -1,5 +1,5 @@
 -- 0003_user_follows：用户关注关系（社交接口 P2 开放，表结构先建齐）
--- 与 users 同 schema，但沿用跨服务表风格只做逻辑引用（应用层校验），不建物理外键
+-- 逻辑引用 users.id（禁止物理外键）；自关注放行业务允许
 CREATE TABLE user_follows (
   follower_id BIGINT UNSIGNED NOT NULL,              -- 逻辑引用 users.id
   followee_id BIGINT UNSIGNED NOT NULL,              -- 逻辑引用 users.id

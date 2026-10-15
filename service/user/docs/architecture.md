@@ -4,7 +4,7 @@
 
 账号生命周期管理服务，对内暴露 gRPC 接口，数据持久化到 MySQL。
 
-负责：注册、登录（双 token 签发）、token 轮换、用户信息查询、修改密码。
+负责：注册（邮箱+验证码）、登录（邮箱+密码，双 token 签发）、token 轮换、用户信息查询、修改密码、找回密码（TODO-014）、登录设备管理（TODO-015）、邮箱验证码发送与校验（Redis，TODO-013）。
 不负责：access token 校验（由 Gateway 负责）、限流（由 Gateway 负责）、面向前端的 HTTP 接口（由 Gateway 转发）。
 
 ## 技术选型
@@ -31,7 +31,7 @@
 **选型：双 token（access JWT + refresh 不透明令牌）**
 
 - access token：JWT（golang-jwt/jwt/v5，HS256），短期有效，Gateway 用共享密钥本地校验，**不回源 user 服务**
-- refresh token：随机不透明串，SHA-256 哈希后存 MySQL，支持轮换与吊销
+- refresh token：随机不透明串，SHA-256 哈希后存 MySQL `sessions` 表（每设备一行），支持轮换与吊销
 
 选型原因见下文「认证设计」。
 
@@ -43,19 +43,20 @@
 
 ## 职责
 
-- 用户注册（用户名唯一性校验、密码哈希存储）
-- 用户登录（校验凭证、签发双 token）
-- refresh token 轮换（每次刷新签发新 token，旧 token 作废）
+- 用户注册（邮箱验证码校验，email 唯一）
+- 用户登录（邮箱+密码校验凭证，签发双 token，按设备建立会话）
+- refresh token 轮换（每次刷新原地更新会话 token_hash）
 - 用户信息查询（供 Gateway / 其他服务按 ID 查询）
-- 修改密码（校验旧密码，成功后吊销该用户全部 refresh token）
+- 修改密码（校验旧密码，成功后吊销该用户全部会话）
+- 找回密码（邮箱验证码重置，成功后吊销该用户全部会话）——TODO-014
+- 登录设备管理（设备列表 / 踢设备下线）——TODO-015
 
 **明确不做**（YAGNI，需求出现再加）：
 
 - 第三方登录（OAuth）
-- 找回 / 重置密码
 - 用户列表、禁用 / 删除等管理接口
-- 会话黑名单（access token 短期有效，不引入 Redis）
-- 用户名查重以外的搜索能力
+- 会话黑名单（access token 短期有效，自然过期即可）
+- 邮箱查重以外的搜索能力
 
 ## 认证设计（双 token）
 
@@ -65,11 +66,10 @@
 |--------|------|------|
 | 签发方 | user 服务签发，Gateway 校验 | 账号凭证的签发与校验分离：密钥由 user（签发）与 Gateway（校验）通过共享配置持有，user 不感知请求链路 |
 | access token | JWT HS256，有效期 **15 分钟** | Gateway 本地验签零回源；短期限制泄露窗口 |
-| refresh token | 32 字节随机数（base64url），有效期 **7 天**，DB 只存 SHA-256 哈希 | 不可伪造、可吊销；哈希存储即使库泄密也无法直接使用 |
-| 刷新策略 | **轮换（rotation）**：Refresh 时签发新 access + 新 refresh，旧 refresh 标记 `revoked_at` 作废（行保留至其自然过期） | 行保留才能识别「重用已作废 token」；若直接删除则哈希行消失，无法区分伪造与重用 |
-| 重用检测 | 若收到已作废的 refresh token，视为泄露，吊销该用户全部 refresh token | 强制该用户重新登录 |
-| 改密行为 | 修改密码成功后吊销该用户全部 refresh token | 已登录会话在 access 过期（≤15 分钟）后需重新登录 |
-| 不用 Redis | refresh 落 MySQL，不引入 Redis | 单机账号规模下 DB 完全够用，避免为 token 提前引入基础设施 |
+| refresh token | 32 字节随机数（base64url），有效期 **7 天**，`sessions.token_hash` 只存 SHA-256 哈希 | 不可伪造、可吊销；哈希存储即使库泄密也无法直接使用 |
+| 刷新策略 | **轮换（rotation）**：Refresh 时签发新 access + 新 refresh，`sessions.token_hash` **原地更新**为新哈希（`last_active_at` 顺带更新） | 会话按设备一行，轮换不增行；**不做重用检测**，旧 token 复用按无效拒绝（最简语义，已裁决） |
+| 改密行为 | 修改密码 / 找回密码成功后删除该用户全部 `sessions` 行 | 已登录会话在 access 过期（≤15 分钟）后需重新登录 |
+| 验证码存储 | 注册 / 找回密码的邮箱验证码存 **Redis**（TTL 5 分钟、一次性、失败 5 次作废、发送 60s 限频） | 过期与一次性语义由 Redis 天然承担，不建表；key 规范 `user:email_code:<scene>:<email>`（见根 AGENTS.md「Redis Key 规范」） |
 
 ### Token 流转
 
@@ -83,11 +83,11 @@ Gateway ──本地验签（共享密钥）──▶ 通过则转发，user_id 
 前端调 /auth/refresh ──Gateway 转发（无需 access）──▶ user.Refresh(refresh)
    │                                              └─ 轮换：旧 refresh 作废，返回新对
    ▼
-重用已作废 refresh ──▶ 吊销该用户全部 refresh，返回 Unauthenticated
+旧 refresh 复用（轮换后）──▶ 按无效拒绝，返回 Unauthenticated
 ```
 
 - refresh 请求**必须绕过 access 校验**：Gateway 的 `/auth/refresh` 路由不做认证，直接转发
-- access token 中携带 `sub`（用户 ID）与 `username`；Gateway 解析后将 `user_id` 透传给下游服务
+- access token 中携带 `sub`（用户 ID）与 `username`（展示名）；Gateway 解析后将 `user_id` 透传给下游服务
 - 用户禁用（`status=0`）后，refresh 与新登录均拒绝；access 在其自然过期前仍可通过验签（15 分钟窗口可接受）
 
 ## 接口设计
@@ -105,31 +105,45 @@ package user.v1;
 option go_package = "github.com/gangantongxue/GanRAG/api/gen/user/v1;userv1";
 
 service UserService {
+  rpc SendEmailCode(SendEmailCodeRequest) returns (SendEmailCodeResponse);   // 发送邮箱验证码（register / reset_password）
   rpc Register(RegisterRequest) returns (RegisterResponse);
   rpc Login(LoginRequest) returns (LoginResponse);
   rpc Refresh(RefreshRequest) returns (RefreshResponse);
   rpc GetUser(GetUserRequest) returns (GetUserResponse);
   rpc UpdatePassword(UpdatePasswordRequest) returns (UpdatePasswordResponse);
+  rpc ResetPassword(ResetPasswordRequest) returns (ResetPasswordResponse);   // 忘记密码（TODO-014）
+  rpc ListSessions(ListSessionsRequest) returns (ListSessionsResponse);      // 登录设备列表（TODO-015）
+  rpc RevokeSession(RevokeSessionRequest) returns (RevokeSessionResponse);   // 踢设备下线（TODO-015）
 }
 
 message User {
   int64  id = 1;         // 用户 ID（自增主键）
-  string username = 2;   // 用户名（唯一）
-  string nickname = 3;   // 昵称（首期默认等于用户名）
+  string email = 2;      // 登录标识（唯一）
+  string username = 3;   // 展示名，可重复、可为空
   int32  status = 4;     // 1 正常 0 禁用
   int64  created_at_unix = 5;
   int64  updated_at_unix = 6;
 }
 
+message SendEmailCodeRequest {
+  string email = 1;
+  string scene = 2;      // register | reset_password
+}
+message SendEmailCodeResponse {}   // 防枚举：不回传验证码是否发出等细节
+
 message RegisterRequest {
-  string username = 1;   // 3-32 字符，字母数字与 _ -
-  string password = 2;   // 8-64 字符
+  string email = 1;      // 邮箱（唯一）
+  string code = 2;       // 邮箱验证码
+  string password = 3;   // 8-64 字符
+  string username = 4;   // 展示名，可选
 }
 message RegisterResponse { User user = 1; }   // 不返回 token，注册成功后前端走登录
 
 message LoginRequest {
-  string username = 1;
+  string email = 1;
   string password = 2;
+  string device_id = 3;    // 设备码（客户端生成持久 UUID）
+  string device_info = 4;  // 设备信息（UA/平台摘要）
 }
 message LoginResponse {
   User   user = 1;
@@ -156,6 +170,28 @@ message UpdatePasswordRequest {
   string new_password = 3; // 8-64 字符
 }
 message UpdatePasswordResponse {}
+
+message ResetPasswordRequest {
+  string email = 1;
+  string code = 2;         // 邮箱验证码（scene=reset_password）
+  string new_password = 3; // 8-64 字符
+}
+message ResetPasswordResponse {}
+
+message Session {
+  int64  id = 1;
+  string device_id = 2;
+  string device_info = 3;
+  int64  last_active_at_unix = 4;
+  int64  created_at_unix = 5;
+}
+message ListSessionsRequest { int64 user_id = 1; }   // Gateway 从 access token 注入
+message ListSessionsResponse { repeated Session sessions = 1; }  // 仅返回在线（revoked_at IS NULL）会话
+message RevokeSessionRequest {
+  int64 user_id = 1;    // Gateway 注入
+  int64 session_id = 2;
+}
+message RevokeSessionResponse {}
 ```
 
 ### 约束与错误码
@@ -164,13 +200,16 @@ message UpdatePasswordResponse {}
 
 | RPC | 约束 | 错误码 |
 |-----|------|--------|
-| Register | 用户名 3-32 字符（`[a-zA-Z0-9_-]`）、密码 8-64 字符 | `InvalidArgument` 参数不合法；`AlreadyExists` 用户名已存在 |
-| Login | 用户不存在与密码错误**统一返回** `Unauthenticated` | `Unauthenticated`；`FailedPrecondition` 用户被禁用 |
-| Refresh | token 过期 / 作废 / 重用 | `Unauthenticated`（重用场景同时吊销该用户全部 refresh） |
+| SendEmailCode | 邮箱格式、scene 合法、发送限频（60s） | `InvalidArgument` 参数不合法；`ResourceExhausted` 触发限频 |
+| Register | 邮箱唯一、验证码有效（TTL 5 分钟 / 一次性 / 失败 5 次作废）、密码 8-64 字符 | `InvalidArgument` 参数不合法；`Unauthenticated` 验证码无效；`AlreadyExists` 邮箱已注册 |
+| Login | 邮箱不存在与密码错误**统一返回** `Unauthenticated` | `Unauthenticated`；`FailedPrecondition` 用户被禁用 |
+| Refresh | token 过期 / 无效（含轮换后旧 token 复用，按无效拒绝） | `Unauthenticated` |
 | GetUser | 目标不存在 | `NotFound` |
 | UpdatePassword | user_id 缺失、新密码不合法 | `InvalidArgument`；`Unauthenticated` 旧密码错误或用户不存在（user_id 由 Gateway 从 token 注入，用户不存在说明凭证陈旧，与防枚举策略一致，不返回 `NotFound`） |
+| ResetPassword | 验证码有效、新密码 8-64 字符 | `InvalidArgument`；`Unauthenticated` 验证码无效（TODO-014） |
+| ListSessions / RevokeSession | user_id 由 Gateway 注入；session_id 需归属该用户 | `InvalidArgument`；`NotFound` 会话不存在（TODO-015） |
 
-- Login 不区分「用户不存在」与「密码错误」，防止用户名枚举
+- Login 不区分「邮箱不存在」与「密码错误」，防止账号枚举；Register / ResetPassword 同样不回传「邮箱是否已注册」等可枚举信息
 - 所有接口错误细节只写日志，不回传内部信息（与 vector-store / file-store 约定一致）
 
 ## 数据存储
@@ -183,51 +222,59 @@ message UpdatePasswordResponse {}
 pkg/db/migrations/ganrag_user/
 ├── 0001_users.up.sql
 ├── 0001_users.down.sql
-├── 0002_refresh_tokens.up.sql
-├── 0002_refresh_tokens.down.sql
+├── 0002_sessions.up.sql
+├── 0002_sessions.down.sql
 ├── 0003_user_follows.up.sql
 └── 0003_user_follows.down.sql
 ```
 
 **执行方式**：由 `pkg/db` 执行 `migrate.Up`（服务启动时按配置 `database.auto_migrate`，默认 `true`，迁移失败则拒绝启动；亦可用 `task db-up` 手动同步）。所有服务共用一个 MySQL 实例、各自独立的 migration 子目录。修改 SQL 前必须先 `task db-status` 查看当前版本（见根 AGENTS.md「SQL 迁移修改规范」）。
 
-### 表结构
+### 表结构（目标定稿）
+
+> **建表迁移已交付**（2026-10-15 迁移基线重写，0001-0003，含 xid；旧 `refresh_tokens` 及其物理外键随重写消除，见 [docs/fix.md](../../../docs/fix.md) `FIX-001`）；代码适配见 [docs/todo.md](../../../docs/todo.md) `TODO-011` / `TODO-012` / `TODO-016`。完整 DDL 与字段/索引表见 [docs/database.md](../../../docs/database.md)；设计决策见 [docs/data-model.md](../../../docs/data-model.md)「ganrag_user」。
 
 ```sql
--- 0001_users：用户账号
+-- users：用户账号（TODO-011 改造：add email + uk_users_email、drop uk_users_username、drop nickname）
 CREATE TABLE users (
   id            BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
-  username      VARCHAR(64)  NOT NULL,
-  password_hash VARCHAR(100) NOT NULL,           -- bcrypt 结果
-  nickname      VARCHAR(64)  NOT NULL DEFAULT '',
-  status        TINYINT      NOT NULL DEFAULT 1, -- 1 正常 0 禁用
+  email         VARCHAR(254) NOT NULL,             -- 登录标识（登录/找回密码）
+  username      VARCHAR(64)  NOT NULL DEFAULT '',  -- 展示名，可重复、可不填
+  password_hash VARCHAR(100) NOT NULL,             -- bcrypt 结果
+  status        TINYINT      NOT NULL DEFAULT 1,   -- 1 正常 0 禁用
   created_at    DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at    DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (id),
-  UNIQUE KEY uk_users_username (username)
+  UNIQUE KEY uk_users_email (email)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
--- 0002_refresh_tokens：refresh token（只存哈希）
-CREATE TABLE refresh_tokens (
-  id         BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
-  user_id    BIGINT UNSIGNED NOT NULL,
-  token_hash CHAR(64)        NOT NULL,  -- SHA-256 hex（明文 refresh 的哈希）
-  expires_at DATETIME        NOT NULL,
-  revoked_at DATETIME        NULL,      -- 轮换/吊销时间；NULL = 活跃，非 NULL = 已作废（重用检测信号）
-  created_at DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP,
+-- sessions：登录会话（TODO-012 新建，替代 refresh_tokens；每设备一行）
+CREATE TABLE sessions (
+  id             BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  user_id        BIGINT UNSIGNED NOT NULL,          -- 逻辑引用 users.id（无外键）
+  device_id      VARCHAR(64)  NOT NULL,             -- 设备码（客户端生成持久 UUID）
+  device_info    VARCHAR(255) NOT NULL DEFAULT '',  -- 设备信息（UA/平台摘要，设备列表展示）
+  token_hash     CHAR(64)     NOT NULL,             -- 当前 refresh token 的 SHA-256，轮换原地更新
+  expires_at     DATETIME     NOT NULL,
+  revoked_at     DATETIME     NULL,                 -- NULL=在线；非 NULL=登出/被踢
+  last_active_at DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  created_at     DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (id),
-  UNIQUE KEY uk_refresh_token_hash (token_hash),
-  KEY idx_refresh_tokens_user_id (user_id),
-  CONSTRAINT fk_refresh_tokens_user FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
+  UNIQUE KEY uk_sessions_token_hash (token_hash),
+  UNIQUE KEY uk_sessions_user_device (user_id, device_id),
+  KEY idx_sessions_user_id (user_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 ```
 
 ### 读写行为
 
-- **登录 / 刷新**：单条主键或唯一索引查询，无慢路径
-- **refresh 轮换**：同事务内标记旧记录作废（`revoked_at` 置为当前时间，条件 `revoked_at IS NULL` 保证原子性）+ 插入新记录；已作废行保留至其自然过期，用于重用检测（直接删除则无法区分伪造与重用）
-- **过期清理**：登录 / 刷新时顺带删除该用户已过期记录（惰性清理，无需定时任务）
-- **改密**：单事务内更新 `users.password_hash` + 删除该用户全部 refresh 记录
+- **登录 / 刷新**：单条唯一索引查询，无慢路径
+- **登录建会话**：按 `(user_id, device_id)` upsert `sessions` 行（同设备重登覆盖旧会话，`token_hash` 换新、`revoked_at` 清空）
+- **refresh 轮换**：原地更新 `token_hash` 与 `last_active_at`；**不做重用检测**，旧 token 复用按无效拒绝（`ErrRefreshNotFound` → `Unauthenticated`）
+- **过期清理**：登录 / 刷新时顺带删除该用户已过期 `sessions` 行（惰性清理，无需定时任务）
+- **改密 / 找回密码**：单事务内更新 `users.password_hash` + 删除该用户全部 `sessions` 行
+- **踢设备 / 登出**：置 `revoked_at`（行保留供列表展示）；设备列表默认只返回在线行
+- **邮箱验证码**：存 Redis（不建表），key `user:email_code:<scene>:<email>`（scene：`register` / `reset_password`），value 为验证码 SHA-256 哈希，TTL 5 分钟；验证成功即 DEL、失败 5 次作废该 key；发送限频 `user:email_code_limit:<email>`（TTL 60s）
 
 ## 配置
 
@@ -255,6 +302,12 @@ jwt:
   access_ttl: "15m"
   refresh_ttl: "168h"     # 7 天
 
+redis:
+  host: "127.0.0.1"
+  port: 6379
+  password: ""            # 建议 GANRAG_REDIS_PASSWORD 环境变量覆盖
+  db: 0
+
 log:
   output: "both"          # console | file | both
   level: "info"           # debug | info | warn | error
@@ -277,10 +330,15 @@ services:
     # 端口 3306、root/应用密码走环境变量（.env，已 gitignore）
     # 数据卷 mysql-data 持久化，healthcheck: mysqladmin ping
     # 加入 ganrag 网络，应用侧用容器名 ganrag-mysql 访问
+  redis:
+    image: redis:7
+    container_name: ganrag-redis
+    # 端口 6379、密码走环境变量；验证码类数据可不做持久化
+    # 加入 ganrag 网络，应用侧用容器名 ganrag-redis 访问
 ```
 
 - 根 `Taskfile.yml` 新增任务：`task infra`（启动）、`task infra-down`（停止）；compose 与各服务脚本相互独立
-- **Redis 暂不引入**：其预期用途（限流、会话黑名单、缓存）当前均无落地场景，等需求明确再加入 compose
+- **Redis 用途**：邮箱验证码（注册 / 找回密码，TODO-013）；限流、会话黑名单、缓存等其他用途暂不使用（YAGNI）。key 规范见根 AGENTS.md「Redis Key 规范」
 - 应用库 `ganrag_user`（后续 repository 服务建 `ganrag_repository`）由迁移首次执行时创建
 
 ## 端口规划（全局）
@@ -303,8 +361,8 @@ service/user/
 ├── docs/architecture.md     # 本文档
 ├── internal/
 │   ├── config/              # 配置结构、校验（jwt.secret 必填校验，database 复用 pkg/db.Config）
-│   ├── store/               # 用户与 refresh token 业务查询（基于 pkg/db 生成的 query 包）
-│   ├── auth/                # bcrypt 哈希校验、JWT 签发、refresh token 生成与哈希
+│   ├── store/               # 用户与会话 sessions 业务查询（基于 pkg/db 生成的 query 包）
+│   ├── auth/                # bcrypt 哈希校验、JWT 签发、refresh token 生成与哈希、验证码生成校验
 │   └── server/              # gRPC handler 与错误码映射、服务生命周期
 └── scripts/                 # 本服务构建与运行脚本（沿用既有约定）
 ```
@@ -313,5 +371,7 @@ service/user/
 
 ## 实现状态
 
-> 已实现（2026-10-09）：proto、配置、迁移（0001-0003，位于 `pkg/db/migrations/ganrag_user/`）、
-> store/auth/handler、单元测试（SQLite）与端到端冒烟（grpcurl）均完成；`Taskfile.yml` 端口已填 50051。
+> 已实现（2026-10-09）：proto、配置、迁移、store/auth/handler、单元测试（SQLite）与端到端冒烟（grpcurl）均完成；`Taskfile.yml` 端口已填 50051。
+>
+> **待实施（本文档已按新设计更新）**：邮箱登录标识 + sessions 会话模型 + Redis 邮箱验证码 + 找回密码 + 设备管理。
+> 建表迁移已交付（2026-10-15 重写，`pkg/db/migrations/ganrag_user/0001-0003`）；剩余代码适配与功能跟踪见 [docs/fix.md](../../../docs/fix.md) `FIX-001` 与 [docs/todo.md](../../../docs/todo.md) `TODO-011`~`TODO-016`。
