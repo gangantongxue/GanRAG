@@ -134,9 +134,9 @@ CREATE TABLE articles (
   id         BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
   kb_id      BIGINT UNSIGNED NOT NULL,
   dir_id     BIGINT UNSIGNED NOT NULL DEFAULT 0,    -- 0 = 根
-  type       TINYINT         NOT NULL,              -- 1 md 2 txt
+  type       TINYINT         NOT NULL,              -- 1 md 2 txt 3 pdf 4 docx 5 html
   title      VARCHAR(200)    NOT NULL,
-  content    LONGTEXT        NOT NULL,              -- md 原文（引用已改写为稳定 URL）
+  content    LONGTEXT        NOT NULL,              -- md 原文（引用已改写为稳定 URL）；pdf/docx/html 存 markitdown 转换后的 md
   created_by BIGINT UNSIGNED NOT NULL,              -- 逻辑引用 users.id
   created_at DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -146,7 +146,7 @@ CREATE TABLE articles (
 );
 ```
 
-#### attachments 图片附件
+#### attachments 文件附件（图片 + PDF/Word/HTML 原文）
 
 ```sql
 CREATE TABLE attachments (
@@ -165,6 +165,7 @@ CREATE TABLE attachments (
 ```
 
 - **file-store bucket 约定：`kb-<kb_id>`**，key 形如 `<uuid>/<原始文件名>`；Repository 服务是 file-store 的唯一调用方，gateway 只经 Repository 鉴权后取流
+- pdf / docx / html 文章的**原文文件**同样存入本表（`content_type` 如 `application/pdf`），与文章固定绑定
 - 稳定 URL 形如 `/api/v1/attachments/<id>`，经 gateway 鉴权（公开库可见、私有库校验成员）后转发
 
 #### article_attachments 文章-附件绑定
@@ -179,6 +180,7 @@ CREATE TABLE article_attachments (
 ```
 
 - 每次保存文章时全量重建该文章的绑定行；随后删除本 kb 内「零引用」附件（表 + file-store）
+- pdf / docx / html 文章与其原文附件为**固定绑定**：上传时建立，不参与保存重建，随文章删除清理
 
 #### article_refs 文章互链
 
@@ -247,6 +249,9 @@ CREATE TABLE chat_sessions (
   id              BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
   user_id         BIGINT UNSIGNED NOT NULL,          -- 逻辑引用 users.id
   kb_id           BIGINT UNSIGNED NOT NULL DEFAULT 0,-- 0 = 全局，否则绑定单个知识库
+  agent           VARCHAR(32)     NOT NULL DEFAULT '', -- 当前智能体 id（粘性状态，P1.5 多智能体路由用）
+  context         LONGTEXT        NULL,                 -- 压缩后的模型上下文；NULL = 未压缩（prompt 拼全量历史）
+  context_msg_id  BIGINT UNSIGNED NOT NULL DEFAULT 0,   -- 拼接游标：原始消息 id >= 此值接在 context 后进 prompt；0 = 全量
   title           VARCHAR(200)    NOT NULL DEFAULT '', -- 首条消息自动生成，可改
   created_at      DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at      DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -263,6 +268,7 @@ CREATE TABLE chat_messages (
   id         BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
   session_id BIGINT UNSIGNED NOT NULL,
   role       TINYINT         NOT NULL,               -- 1 user 2 assistant
+  agent      VARCHAR(32)     NOT NULL DEFAULT '',    -- 产生该消息的智能体 id，user 消息为空
   content    LONGTEXT        NOT NULL,
   sources    JSON            NULL,                   -- 预留：回答引用的来源（文章/分块），P2+ 接入
   created_at DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -289,9 +295,12 @@ relation(kb, me) =
 
 ## 检索实现约定（AI 服务落地时遵循）
 
-1. 向量库按知识库隔离：vector-store 集合 `kb-<kb_id>`（文章分块入库），全局检索时对可见集合逐个查询后归并
+1. 向量库按「知识库 × 向量化模型」隔离：vector-store 集合 `kb-<kb_id>-<model_id>`（文章分块入库），全局检索时对可见集合逐个查询后归并；检索只查**当前模型**后缀的集合——用什么模型，就检索对应的向量化结果
 2. 文章保存/删除时，Repository 服务向 AI 服务同步增量（或 AI 订阅），由 AI 负责向量的写入与清理
 3. 重排序阶段读取关系状态四个信号 → 按权重配置调整排名（P1 只做候选集过滤，P3 接入权重）
+4. 向量输入统一为 `articles.content`（pdf/docx/html 即转换后的 md）：转换结果一次存储，重建索引 / 换 embedding 模型不重跑 markitdown；文档内嵌图片不提取，不参与分块
+5. 模型上下文不进消息表：压缩上下文存 `chat_sessions.context`，prompt 拼装 = context + `chat_messages` 中 `id >= context_msg_id` 的消息；压缩时**替换** context 并推进游标，**原始消息不删**，`search_context` 仍可搜到被压缩区域
+6. 切换向量化模型：新写入即切新模型集合 → 后台按 `articles.content` **全量重建**新模型集合（不重跑 markitdown）→ 重建完成前旧集合继续服务 → 完成后配置原子切换并下线旧集合（保留期可回滚）；旧向量按 metadata `embedding_model` 批量清理
 
 ## 分期与迁移对照
 

@@ -107,6 +107,17 @@ Go 标准库结构化日志 + 日志文件轮转：
 - 简单易用：一行代码加载
 - 安全性：敏感信息不入代码库
 
+### 文档转换（PDF / Word / HTML）
+
+> **落地状态：设计定稿，代码未实现**（P1.5）——实现后更新本文「设计落地状态」。
+
+**选型：markitdown**（微软开源，MIT）
+
+- 通用文档转 Markdown：PDF / Word（docx）/ HTML → md，保留标题、列表、表格、链接结构
+- 离线转换：内置转换器本地运行，无云依赖（`pip install 'markitdown[pdf,docx]'`，HTML 为核心内置）
+- 集成方式：Python CLI 子进程，stdin 喂字节流、stdout 收 md（官方安全口径 `convert_stream`，不拼文件路径、不解析 URI，防路径穿越与 SSRF）
+- **不做 OCR**：只提取文本层，文档内嵌图片中的文字不提取、不参与向量化——前端须明示此限制；扫描件（无文字层）转换为空，拒绝上传
+
 ## 技术栈
 
 ### 前端
@@ -143,6 +154,7 @@ Go 标准库结构化日志 + 日志文件轮转：
 | 配置(.env) | GoDotEnv | 环境变量 |
 | 向量存储 | chromem-go | 纯 Go 内嵌向量库，详见 service/vector-store/docs/ |
 | 对象存储 | 自建 (os 包) | Go 标准库实现，详见 service/file-store/docs/ |
+| 文档转换 | markitdown (Python CLI) | PDF / Word / HTML → md，上传时转换，详见 docs/product.md |
 
 ## 各服务架构详情
 
@@ -154,6 +166,19 @@ Go 标准库结构化日志 + 日志文件轮转：
 | Repository Service | - |
 | Vector Store | [service/vector-store/docs/architecture.md](../../service/vector-store/docs/architecture.md) |
 | File Store | [service/file-store/docs/architecture.md](../../service/file-store/docs/architecture.md) |
+
+## 设计落地状态
+
+> 已定稿但尚未实现的设计汇总。**实现完成时更新状态、新增设计文档必须登记于此**，防止文档与代码脱节。
+> 状态图例：📝 设计定稿未实现 / 🔨 实现中 / ✅ 已实现。
+
+| 设计项 | 状态 | 阶段 | 详见 |
+|--------|------|------|------|
+| 多智能体路由与切换（Laya） | 📝 设计定稿，代码未实现 | P1.5 | [service/ai/docs/architecture.md](../../service/ai/docs/architecture.md) |
+| 上下文压缩（会话级 context + 消息游标） | 📝 设计定稿，代码未实现 | P1.5 | [service/ai/docs/architecture.md](../../service/ai/docs/architecture.md)、[data-model.md](data-model.md) |
+| 文档上传（pdf / docx / html → markitdown） | 📝 设计定稿，代码未实现 | P1.5 | 本文「文档转换」、[product.md](product.md) |
+| 向量化按模型存储与检索路由 | 📝 设计定稿，代码未实现 | P1.5 | [service/vector-store/docs/architecture.md](../../service/vector-store/docs/architecture.md) |
+| chat_sessions.agent / context / context_msg_id 字段 | 🗄 表结构已设计，随 P1 建表落地 | P1 | [data-model.md](data-model.md) |
 
 ## 决策记录
 
@@ -180,3 +205,10 @@ Go 标准库结构化日志 + 日志文件轮转：
 | 2026-10-09 | 聊天会话绑定检索范围（单库或全局，kb_id=0 表示全局）；关系状态（own/member/star/follow）作为检索权重信号 | 检索范围随会话固化保证历史会话可复现；权重映射由 AI 服务配置持有，P3 调参 |
 | 2026-10-09 | 表结构 P1 一次设计到位，接口/界面按 P1 内容聊天、P2 社交、P3 权重三期交付 | 避免后期破坏性迁移；关系状态从第一天起即为完整事实；详见 docs/data-model.md |
 | 2026-10-11 | Gateway 第一期落地：Hertz 路由 + access token 本地验签 + 手写 HTTP→gRPC 转发（先接 user 5 个 RPC）+ 双维度令牌桶限流（auth 1/5、default 10/20，超限 429 统一错误体） | 手写 handler 少依赖、错误映射可控；限流按「登录用户 / 匿名 IP」分桶防爆破；熔断与限流灰度策略等需求出现再加（YAGNI）；详见 service/gateway/docs/architecture.md |
+| 2026-10-15 | AI 服务智能体路由选型 Laya（开源 Jev 兼容决策模型，Apache-2.0） | 一次前向出带校准概率的 choice 决策、33ms 级、本地可跑；置信度用 confidence 不用 act_probability（issue #185）；详见 service/ai/docs/architecture.md |
+| 2026-10-15 | 会话内智能体切换采用「单次 Laya 调用 + 代码粘性策略」，切换时前智能体交接摘要 | 「是否切换」是应用策略非语义判断，避免双问矛盾与决策前的总结开销；置信度 + 概率差 + 冷却防抖，少切换保缓存命中 |
+| 2026-10-15 | 多智能体能力列为 P1.5 独立阶段，表字段 P1 一次设计到位 | P1 先单智能体闭环；chat_sessions.agent / chat_messages.agent 随 P1 建表落地，避免破坏性迁移；详见 docs/data-model.md |
+| 2026-10-15 | 文章支持 pdf / docx / html 上传：markitdown 转 md 存入 articles.content，原文附件留档，内容只读 | 向量化 / 溯源引用 / 前端渲染统一走 content 口径，重建索引免重跑转换、不受版本漂移影响；不做 OCR（内嵌图片文字不进检索，前端明示）；详见 docs/product.md |
+| 2026-10-15 | 模型上下文采用「会话级 context + 消息游标」替换式压缩，不落消息表 | 消息表保持纯对话，模型上下文结构性不进用户页面；多次压缩直接替换无堆积；原文不删、search_context 仍可溯；详见 docs/data-model.md |
+| 2026-10-15 | 向量化结果按「知识库 × 向量化模型」分集合存储（`kb-<kb_id>-<model_id>`），检索按模型路由 | 不同模型维度不同、同集合维度必须一致，只能分集合；切换模型全量重建新集合、旧集合保留期可回滚；详见 service/vector-store/docs/architecture.md |
+| 2026-10-15 | 文档新增「设计落地状态」聚合表 + 各设计章节就近状态标注 | 已定稿未实现的设计集中登记，防止文档与代码状态脱节；实现时必须同步更新 |
