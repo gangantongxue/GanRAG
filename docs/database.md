@@ -354,7 +354,7 @@ CREATE TABLE chat_sessions (
   user_id         BIGINT UNSIGNED NOT NULL,            -- 逻辑引用 users.id
   kb_id           BIGINT UNSIGNED NOT NULL DEFAULT 0,  -- 0 = 全局，否则单知识库
   agent           VARCHAR(32)     NOT NULL DEFAULT '',
-  context         LONGTEXT        NULL,                -- 压缩后的模型上下文
+  context         LONGTEXT        NULL,                -- AI 内部压缩上下文：最新 Agent 提示词 + 摘要，不直接展示
   context_msg_id  BIGINT UNSIGNED NOT NULL DEFAULT 0,  -- 压缩游标
   title           VARCHAR(200)    NOT NULL DEFAULT '',
   created_at      DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -373,7 +373,7 @@ CREATE TABLE chat_sessions (
 | user_id | BIGINT UNSIGNED | 逻辑引用 users.id |
 | kb_id | BIGINT UNSIGNED | 检索范围：0 全局 / 否则单知识库，随会话固化 |
 | agent | VARCHAR(32) | 当前智能体 id（粘性状态，P1.5 多智能体路由用） |
-| context | LONGTEXT NULL | 会话级压缩后的模型上下文；NULL=未压缩 |
+| context | LONGTEXT NULL | AI 内部压缩上下文；包含最新 Agent 提示词和摘要，NULL=未压缩；不直接返回前端 |
 | context_msg_id | BIGINT UNSIGNED | 压缩游标：prompt = context + id ≥ 此值的消息 content；压缩替换 context 并推进游标，原始消息不删 |
 | title | VARCHAR(200) | 首条消息自动生成，可改 |
 | created_at / updated_at / last_message_at | DATETIME | last_message_at 为右栏排序键 |
@@ -460,14 +460,17 @@ CREATE TABLE chat_message_parts (
 | `source-document` | 标题 / 检索片段 | `article_xid` / `title` / `snippet` / `score` | 来源列表，点击跳 `/articles/<article_xid>` |
 | `source-url` | 标题 | `url` 等 | 外链来源 |
 | `file` | — | `mediaType` / `url`（附件 xid 稳定 URL） | 图片/文件气泡 |
+| `agent-system` | Agent 专属系统提示词 | `agent_id` / 注入时间 | 内部使用，禁止返回前端 |
 | （新增展示需求） | 按需 | 按需 | 自定义 part，零 DDL 变更 |
 
 **存储与读取约定**：
 
 - 全量存储：一次 assistant 回答的每一步（reasoning、每次 tool 调用与结果、每个正文段、来源）都落 part 行
 - payload 原样：消息可无损重组为 `UIMessage[]` 喂 `useChat(initialMessages)`
-- prompt 拼装：`context` + 游标后消息的 `content`；多智能体如需工具轨迹从 parts 按 type 过滤
-- 检索：`search_context` 覆盖 `chat_messages.content` 与 `chat_message_parts.content`
+- prompt 拼装：固定 System Prompt + `context` + 游标后消息的 `content`；压缩后的 `context` 只保留最新 Agent 提示词和摘要；多智能体如需工具轨迹从 parts 按 type 过滤
+- 检索：`search_context` 覆盖 `chat_messages.content` 与可检索 parts 的 `content`，明确排除 `agent-system`
+- 安全边界：`agent-system` 只由服务端 Agent 注册表生成，不进入 `useChat(initialMessages)` 或任何用户可见 API 响应；序列化必须按展示类型白名单处理
+- 存储方式：`agent-system` 作为对应用户消息的隐藏 part 保存，不创建独立的隐藏 `chat_messages` 行；现有 `type VARCHAR(32)` 已能容纳该类型，因此本次不新增表、不新增字段、不新增迁移
 - 删除：删会话 = 应用层级联删 messages + parts
 - 聊天记录整体入 MySQL（含工具结果全文）：交易型短文本，不适用「文章内容不入 MySQL」规则
 

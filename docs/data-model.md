@@ -291,7 +291,7 @@ CREATE TABLE chat_sessions (
   user_id         BIGINT UNSIGNED NOT NULL,            -- 逻辑引用 users.id
   kb_id           BIGINT UNSIGNED NOT NULL DEFAULT 0,  -- 0 = 全局，否则绑定单个知识库
   agent           VARCHAR(32)     NOT NULL DEFAULT '', -- 当前智能体 id（粘性状态，P1.5 多智能体路由用）
-  context         LONGTEXT        NULL,                -- 压缩后的模型上下文；NULL = 未压缩（prompt 拼全量历史）
+  context         LONGTEXT        NULL,                -- AI 内部压缩上下文（含最新 Agent 提示词与摘要）；NULL = 未压缩
   context_msg_id  BIGINT UNSIGNED NOT NULL DEFAULT 0,  -- 拼接游标：消息 id >= 此值接在 context 后进 prompt；0 = 全量
   title           VARCHAR(200)    NOT NULL DEFAULT '', -- 首条消息自动生成，可改
   created_at      DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -323,7 +323,7 @@ CREATE TABLE chat_messages (
 );
 ```
 
-- `content` 为**最终输出层**（不含思考/工具细节，那些在 parts）；prompt 拼装 = `context` + 游标后消息的 `content`；`search_context` 检索覆盖 `content` 与 parts 的 `content`
+- `content` 为**最终输出层**（不含思考/工具细节，那些在 parts）；prompt 拼装 = 固定 System Prompt + `context` + 游标后消息；`search_context` 检索覆盖可见 `content` 与 parts 的 `content`
 
 #### chat_message_parts 消息步骤（全量细节层，对齐 UIMessage parts）
 
@@ -350,11 +350,13 @@ CREATE TABLE chat_message_parts (
 | `source-document` | 标题 / 检索片段 | `article_xid` / `title` / `snippet` / `score`（+ SDK `sourceId` / `mediaType`） | 来源列表，点击跳 `/articles/<article_xid>` |
 | `source-url` | 标题 | `url` 等 | 外链来源 |
 | `file` | — | `mediaType` / `url`（附件 xid 稳定 URL） | 图片/文件气泡 |
+| `agent-system` | Agent 专属系统提示词 | `agent_id` / 注入时间 | **内部隐藏，不返回前端** |
 | （新增展示需求） | 按需 | 按需 | 自定义 part，**零 DDL 变更** |
 
 - **全量存储**：一次 assistant 回答的每一步（reasoning、每次 tool 调用与结果、每个正文段、来源）都落 part 行，按 `seq` 排序、`step` 分组
 - **payload 原样**：`meta` 存 SDK part payload 原文，`content` 为可检索文本抽取；消息可无损重组为 `UIMessage[]`
 - **来源跳转**：RAG 引用走 `source-document`，`article_xid`（不存自增 id）供点击跳转；snippet 只存检索片段，不存文章全文
+- **Agent 提示词隔离**：`agent-system` 只由服务端 Agent 注册表生成，作为当前用户消息下的隐藏 part 存储，用于重建模型请求；不得进入 `useChat(initialMessages)`、用户消息展示或 `search_context` 结果。API 必须按类型白名单序列化，不能依赖前端隐藏。
 - **聊天记录整体入 MySQL**（含工具结果全文）：对话交易型短文本，高频按序读写，不适用「文章内容不入 MySQL」规则
 - **删除**：删会话 = 应用层级联删 messages + parts（无外键）
 
@@ -378,9 +380,9 @@ relation(kb, me) =
 
 1. 向量库按「知识库 × 向量化模型」隔离：vector-store 集合 `kb-<kb_id>-<model_id>`（文章分块入库），全局检索时对可见集合逐个查询后归并；检索只查**当前模型**后缀的集合——用什么模型，就检索对应的向量化结果
 2. 文章保存/删除时，Repository 服务向 AI 服务同步增量（或 AI 订阅），由 AI 负责向量的写入与清理
-3. 重排序阶段读取关系状态四个信号 → 按权重配置调整排名（P1 只做候选集过滤，P3 接入权重）
+3. 检索先做权限硬过滤，再分别走向量与关键词召回并合并去重；重排序使用排名归一化、关系、时间、热度，并由 Decima-small 对前 K 个候选做 `noul` 相关性审查（P1 只做候选集过滤，P3 接入权重与审查）
 4. 向量输入统一为 `articles.content_key` 指向的 file-store 内 md（pdf/docx/html 即转换后的 md）：转换结果一次存储，重建索引 / 换 embedding 模型不重跑 markitdown；文档内嵌图片不提取，不参与分块
-5. 模型上下文不进消息表：压缩上下文存 `chat_sessions.context`，prompt 拼装 = context + `chat_messages` 中 `id >= context_msg_id` 的消息；压缩时**替换** context 并推进游标，**原始消息不删**，`search_context` 仍可搜到被压缩区域
+5. 模型上下文不进用户消息流：压缩上下文存 `chat_sessions.context`，内部结构包含最新 `agent-system` 提示词和摘要；prompt 拼装 = 固定 System Prompt + context + `chat_messages` 中 `id >= context_msg_id` 的可见消息；预计请求 token 达模型上限的 65% 时触发压缩，压缩时**替换** context 并推进游标，最新 Agent 提示词置于摘要前，原始消息不删，`search_context` 排除 `agent-system`
 6. 切换向量化模型：新写入即切新模型集合 → 后台按 `articles.content_key` 读 md **全量重建**新模型集合（不重跑 markitdown）→ 重建完成前旧集合继续服务 → 完成后配置原子切换并下线旧集合（保留期可回滚）；旧向量按 metadata `embedding_model` 批量清理
 
 ## 分期与迁移对照
