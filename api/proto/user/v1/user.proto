@@ -56,6 +56,8 @@ message RegisterResponse {
 message LoginRequest {
   string email = 1;
   string password = 2;
+  string device_id = 3;    // 设备码（可选；合法则沿用，否则服务端生成，口径见 docs/data-model.md「设备标识（device_id）口径」）
+  string device_info = 4;  // 设备信息（可选；前端展示名，缺省由 Gateway 取 User-Agent 截断 255）
 }
 message LoginResponse {
   User   user = 1;
@@ -63,6 +65,7 @@ message LoginResponse {
   string refresh_token = 3;  // 不透明串，7 天
   int64  access_expires_in = 4;   // access 有效期（秒）
   int64  refresh_expires_in = 5;  // refresh 有效期（秒）
+  string device_id = 6;      // 回填：本次生效的设备码（前端存 localStorage，Gateway 设 `did` cookie）
 }
 
 message RefreshRequest {

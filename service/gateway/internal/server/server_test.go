@@ -37,6 +37,7 @@ type fakeUserServer struct {
 	gotRegister *userv1.RegisterRequest // 收到的 Register 请求
 	gotGetUser  *userv1.GetUserRequest  // 收到的 GetUser 请求（断言用户 xid 注入）
 	gotUpdate   *userv1.UpdatePasswordRequest
+	gotLogin    *userv1.LoginRequest // 收到的 Login 请求（断言设备 ID / device_info 合并）
 }
 
 func (f *fakeUserServer) Register(ctx context.Context, req *userv1.RegisterRequest) (*userv1.RegisterResponse, error) {
@@ -48,11 +49,14 @@ func (f *fakeUserServer) Register(ctx context.Context, req *userv1.RegisterReque
 }
 
 func (f *fakeUserServer) Login(ctx context.Context, req *userv1.LoginRequest) (*userv1.LoginResponse, error) {
+	f.gotLogin = req
 	return &userv1.LoginResponse{
 		User:            &userv1.User{Xid: "usr_fake", Email: req.Email},
 		AccessToken:     "access",
 		RefreshToken:    "refresh",
 		AccessExpiresIn: 900,
+		// 回填生效设备码（模拟 user 服务权威生成/核对后的返回）
+		DeviceId: req.DeviceId,
 	}, nil
 }
 
@@ -200,6 +204,49 @@ func TestRefresh_绕过验签(t *testing.T) {
 	}
 	if !strings.Contains(w.Body.String(), `"new-access"`) {
 		t.Errorf("响应体应包含新 access token: %s", w.Body.String())
+	}
+}
+
+// TestLogin_设备ID 验证设备 ID 取值优先级（请求体 > did cookie > 下游生成）与 did cookie 回填
+func TestLogin_设备ID(t *testing.T) {
+	// 请求体 device_id 优先于 cookie，登录成功 Set-Cookie did= 回填
+	engine, fake := newTestGateway(t, &fakeUserServer{})
+	w := ut.PerformRequest(engine, "POST", "/api/v1/auth/login",
+		jsonBody(`{"email":"alice@example.com","password":"password123","device_id":"web_body"}`),
+		ut.Header{Key: "Content-Type", Value: "application/json"},
+		ut.Header{Key: "Cookie", Value: "did=web_cookie"})
+	if w.Code != 200 {
+		t.Fatalf("状态码 = %d，期望 200（body: %s）", w.Code, w.Body.String())
+	}
+	if fake.gotLogin.GetDeviceId() != "web_body" {
+		t.Errorf("下游 device_id = %q，期望请求体优先 web_body", fake.gotLogin.GetDeviceId())
+	}
+	if sc := string(w.Header().Peek("Set-Cookie")); !strings.Contains(sc, "did=web_body") {
+		t.Errorf("Set-Cookie = %q，应回填 did=web_body", sc)
+	}
+
+	// 请求体缺失时回落 did cookie
+	w = ut.PerformRequest(engine, "POST", "/api/v1/auth/login",
+		jsonBody(`{"email":"alice@example.com","password":"password123"}`),
+		ut.Header{Key: "Content-Type", Value: "application/json"},
+		ut.Header{Key: "Cookie", Value: "did=web_cookie"})
+	if fake.gotLogin.GetDeviceId() != "web_cookie" {
+		t.Errorf("下游 device_id = %q，期望回落 cookie web_cookie", fake.gotLogin.GetDeviceId())
+	}
+
+	// 两者皆缺：留空交 user 服务生成；device_info 缺省取 User-Agent
+	w = ut.PerformRequest(engine, "POST", "/api/v1/auth/login",
+		jsonBody(`{"email":"alice@example.com","password":"password123"}`),
+		ut.Header{Key: "Content-Type", Value: "application/json"},
+		ut.Header{Key: "User-Agent", Value: "test-agent/1.0"})
+	if fake.gotLogin.GetDeviceId() != "" {
+		t.Errorf("下游 device_id = %q，期望留空由 user 服务生成", fake.gotLogin.GetDeviceId())
+	}
+	if fake.gotLogin.GetDeviceInfo() != "test-agent/1.0" {
+		t.Errorf("下游 device_info = %q，期望取 User-Agent", fake.gotLogin.GetDeviceInfo())
+	}
+	if sc := string(w.Header().Peek("Set-Cookie")); sc != "" {
+		t.Errorf("无生效设备码时不应 Set-Cookie，实际 %q", sc)
 	}
 }
 

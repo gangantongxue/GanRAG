@@ -36,6 +36,10 @@ func newTestStore(t *testing.T) (*Store, *gorm.DB) {
 	if err := db.AutoMigrate(&dbmodel.User{}, &dbmodel.Session{}, &dbmodel.UserFollow{}); err != nil {
 		t.Fatalf("建表失败: %v", err)
 	}
+	// 对齐迁移 0002_sessions 的组合唯一索引（AutoMigrate 从模型标签推不出组合唯一索引）
+	if err := db.Exec("CREATE UNIQUE INDEX uk_sessions_user_device ON sessions (user_id, device_id)").Error; err != nil {
+		t.Fatalf("建 sessions 唯一索引失败: %v", err)
+	}
 	return New(db), db
 }
 
@@ -125,11 +129,11 @@ func TestUpdatePassword(t *testing.T) {
 	id := mustCreateUser(t, s, "carol")
 
 	// 两个设备的活跃会话
-	if err := s.CreateSession(ctx, id, "dev-1", "", "hash-rt-1", time.Now().Add(time.Hour)); err != nil {
-		t.Fatalf("CreateSession() 错误: %v", err)
+	if err := s.UpsertSession(ctx, id, "dev-1", "", "hash-rt-1", time.Now().Add(time.Hour)); err != nil {
+		t.Fatalf("UpsertSession() 错误: %v", err)
 	}
-	if err := s.CreateSession(ctx, id, "dev-2", "", "hash-rt-2", time.Now().Add(time.Hour)); err != nil {
-		t.Fatalf("CreateSession() 错误: %v", err)
+	if err := s.UpsertSession(ctx, id, "dev-2", "", "hash-rt-2", time.Now().Add(time.Hour)); err != nil {
+		t.Fatalf("UpsertSession() 错误: %v", err)
 	}
 
 	if err := s.UpdatePassword(ctx, id, "new-hash"); err != nil {
@@ -155,8 +159,8 @@ func TestUpdatePassword(t *testing.T) {
 	}
 }
 
-// TestCreateSession_CleansExpired 验证惰性清理：建会话时删除该用户过期行
-func TestCreateSession_CleansExpired(t *testing.T) {
+// TestUpsertSession_CleansExpired 验证惰性清理：建会话时删除该用户过期行
+func TestUpsertSession_CleansExpired(t *testing.T) {
 	s, db := newTestStore(t)
 	ctx := context.Background()
 	id := mustCreateUser(t, s, "dave")
@@ -169,8 +173,8 @@ func TestCreateSession_CleansExpired(t *testing.T) {
 		t.Fatalf("插入过期会话失败: %v", err)
 	}
 
-	if err := s.CreateSession(ctx, id, "dev-fresh", "", "fresh-hash", time.Now().Add(time.Hour)); err != nil {
-		t.Fatalf("CreateSession() 错误: %v", err)
+	if err := s.UpsertSession(ctx, id, "dev-fresh", "", "fresh-hash", time.Now().Add(time.Hour)); err != nil {
+		t.Fatalf("UpsertSession() 错误: %v", err)
 	}
 
 	if _, err := s.GetSessionByTokenHash(ctx, "expired-hash"); !errors.Is(err, ErrSessionNotFound) {
@@ -181,14 +185,60 @@ func TestCreateSession_CleansExpired(t *testing.T) {
 	}
 }
 
+// TestUpsertSession_SameDevice 验证同设备重登 upsert：不增行、token_hash 换新、revoked_at 清空
+func TestUpsertSession_SameDevice(t *testing.T) {
+	s, db := newTestStore(t)
+	ctx := context.Background()
+	id := mustCreateUser(t, s, "frank")
+
+	if err := s.UpsertSession(ctx, id, "dev-1", "旧设备信息", "hash-1", time.Now().Add(time.Hour)); err != nil {
+		t.Fatalf("UpsertSession() 错误: %v", err)
+	}
+	first, err := s.GetSessionByTokenHash(ctx, "hash-1")
+	if err != nil {
+		t.Fatalf("GetSessionByTokenHash() 错误: %v", err)
+	}
+
+	// 模拟被踢下线后同设备重登：revoked_at 非空
+	if err := db.Model(&dbmodel.Session{}).Where("id = ?", first.ID).
+		Update("revoked_at", time.Now()).Error; err != nil {
+		t.Fatalf("置 revoked_at 失败: %v", err)
+	}
+
+	if err := s.UpsertSession(ctx, id, "dev-1", "新设备信息", "hash-2", time.Now().Add(time.Hour)); err != nil {
+		t.Fatalf("UpsertSession() 错误: %v", err)
+	}
+
+	var rows []dbmodel.Session
+	if err := db.Where("user_id = ? AND device_id = ?", id, "dev-1").Find(&rows).Error; err != nil {
+		t.Fatalf("查询会话失败: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("同设备重登后会话行数 = %d，期望 1（不增行）", len(rows))
+	}
+	got := rows[0]
+	if got.TokenHash != "hash-2" || got.DeviceInfo != "新设备信息" {
+		t.Errorf("upsert 后 token_hash/device_info = %q/%q，期望已覆盖", got.TokenHash, got.DeviceInfo)
+	}
+	if got.RevokedAt != nil {
+		t.Errorf("upsert 后 revoked_at = %v，期望清空（重登复活）", got.RevokedAt)
+	}
+	if got.Xid != first.Xid {
+		t.Errorf("upsert 后 xid = %q，期望保持 %q（不覆盖业务主键）", got.Xid, first.Xid)
+	}
+	if _, err := s.GetSessionByTokenHash(ctx, "hash-1"); !errors.Is(err, ErrSessionNotFound) {
+		t.Errorf("旧 hash 错误 = %v，期望不再命中", err)
+	}
+}
+
 // TestRotateSession 验证轮换原地更新 token_hash、不增行、旧 hash 失效
 func TestRotateSession(t *testing.T) {
 	s, db := newTestStore(t)
 	ctx := context.Background()
 	id := mustCreateUser(t, s, "erin")
 
-	if err := s.CreateSession(ctx, id, "dev-1", "", "old-hash", time.Now().Add(time.Hour)); err != nil {
-		t.Fatalf("CreateSession() 错误: %v", err)
+	if err := s.UpsertSession(ctx, id, "dev-1", "", "old-hash", time.Now().Add(time.Hour)); err != nil {
+		t.Fatalf("UpsertSession() 错误: %v", err)
 	}
 	old, err := s.GetSessionByTokenHash(ctx, "old-hash")
 	if err != nil {
@@ -228,12 +278,12 @@ func TestDeleteUserSessions(t *testing.T) {
 	other := mustCreateUser(t, s, "grace")
 
 	for _, h := range []string{"rt-1", "rt-2"} {
-		if err := s.CreateSession(ctx, id, eid.New(eid.Device), "", h, time.Now().Add(time.Hour)); err != nil {
-			t.Fatalf("CreateSession() 错误: %v", err)
+		if err := s.UpsertSession(ctx, id, eid.New(eid.Device), "", h, time.Now().Add(time.Hour)); err != nil {
+			t.Fatalf("UpsertSession() 错误: %v", err)
 		}
 	}
-	if err := s.CreateSession(ctx, other, eid.New(eid.Device), "", "rt-other", time.Now().Add(time.Hour)); err != nil {
-		t.Fatalf("CreateSession() 错误: %v", err)
+	if err := s.UpsertSession(ctx, other, eid.New(eid.Device), "", "rt-other", time.Now().Add(time.Hour)); err != nil {
+		t.Fatalf("UpsertSession() 错误: %v", err)
 	}
 
 	if err := DeleteUserSessions(ctx, s.q, id); err != nil {

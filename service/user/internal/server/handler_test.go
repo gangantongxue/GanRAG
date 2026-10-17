@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/alicebob/miniredis/v2"
 	"github.com/glebarez/sqlite"
@@ -54,6 +55,10 @@ func newTestHandler(t *testing.T) (*Handler, *gorm.DB, *miniredis.Miniredis) {
 	}
 	if err := db.AutoMigrate(&dbmodel.User{}, &dbmodel.Session{}, &dbmodel.UserFollow{}); err != nil {
 		t.Fatalf("建表失败: %v", err)
+	}
+	// 对齐迁移 0002_sessions 的组合唯一索引（AutoMigrate 从模型标签推不出组合唯一索引）
+	if err := db.Exec("CREATE UNIQUE INDEX uk_sessions_user_device ON sessions (user_id, device_id)").Error; err != nil {
+		t.Fatalf("建 sessions 唯一索引失败: %v", err)
 	}
 
 	jwtCfg := config.JWTConfig{
@@ -245,6 +250,61 @@ func TestLogin(t *testing.T) {
 	assertCode(t, err, codes.FailedPrecondition, "禁用用户登录")
 }
 
+// TestLogin_Device 校验设备 ID 方案 A：合法沿用、非法/空服务端生成、回填响应、device_info 截断
+func TestLogin_Device(t *testing.T) {
+	h, db, mr := newTestHandler(t)
+	ctx := context.Background()
+	mustRegister(t, h, mr, "grace@example.com", "grace", "password123")
+
+	// 合法设备码沿用并回填响应
+	resp, err := h.Login(ctx, &userv1.LoginRequest{
+		Email: "grace@example.com", Password: "password123", DeviceId: "web_abc-123",
+	})
+	if err != nil {
+		t.Fatalf("Login() 错误: %v", err)
+	}
+	if resp.DeviceId != "web_abc-123" {
+		t.Errorf("DeviceId = %q，期望沿用 web_abc-123", resp.DeviceId)
+	}
+
+	// 非法设备码不报错，换服务端生成（dev_ 前缀）
+	resp, err = h.Login(ctx, &userv1.LoginRequest{
+		Email: "grace@example.com", Password: "password123", DeviceId: "bad id!",
+	})
+	if err != nil {
+		t.Fatalf("Login() 错误: %v", err)
+	}
+	if !strings.HasPrefix(resp.DeviceId, "dev_") {
+		t.Errorf("非法设备码后 DeviceId = %q，期望服务端生成 dev_ 前缀", resp.DeviceId)
+	}
+
+	// 空设备码同样生成
+	resp, err = h.Login(ctx, &userv1.LoginRequest{Email: "grace@example.com", Password: "password123"})
+	if err != nil {
+		t.Fatalf("Login() 错误: %v", err)
+	}
+	if !strings.HasPrefix(resp.DeviceId, "dev_") {
+		t.Errorf("空设备码后 DeviceId = %q，期望服务端生成 dev_ 前缀", resp.DeviceId)
+	}
+
+	// device_info 超长截断到 255 字符
+	resp, err = h.Login(ctx, &userv1.LoginRequest{
+		Email: "grace@example.com", Password: "password123",
+		DeviceId: "web_abc-123", DeviceInfo: strings.Repeat("长", 300),
+	})
+	if err != nil {
+		t.Fatalf("Login() 错误: %v", err)
+	}
+	var info string
+	if err := db.Raw("SELECT device_info FROM sessions WHERE device_id = ?",
+		resp.DeviceId).Scan(&info).Error; err != nil {
+		t.Fatalf("查询 device_info 失败: %v", err)
+	}
+	if n := utf8.RuneCountInString(info); n != 255 {
+		t.Errorf("device_info 长度 = %d，期望 255", n)
+	}
+}
+
 // TestRefresh 校验刷新：原地轮换、旧 token 复用按无效拒绝、过期拒绝
 func TestRefresh(t *testing.T) {
 	h, _, mr := newTestHandler(t)
@@ -280,7 +340,7 @@ func TestRefresh(t *testing.T) {
 	assertCode(t, err, codes.InvalidArgument, "空 token")
 
 	// 自然过期：写入已过期会话（绕过轮换），刷新拒绝
-	if err := h.st.CreateSession(ctx, 1, eid.New(eid.Device), "",
+	if err := h.st.UpsertSession(ctx, 1, eid.New(eid.Device), "",
 		auth.HashRefreshToken("expired-rt"), time.Now().Add(-time.Minute)); err != nil {
 		t.Fatalf("写入过期会话失败: %v", err)
 	}

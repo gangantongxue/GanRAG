@@ -9,7 +9,6 @@
 | env 配置统一到仓库根 `.env`（服务启动自动加载根 `.env`、删 `service/user/.env`、根 `.env` 补齐 JWT/Redis/邮件占位等全部变量，`.env.example` 与文档同步） | 2026-10-17 | ✅已完成(2026-10-17) |
 | 引入 Redis（compose + 配置 + go-redis）+ 邮箱验证码落 Redis（`user:email_code:<scene>:<email>`，TTL 5 分钟、一次性、失败 5 次作废、发送 60s 限频）+ 验证码邮件发送通道（SMTP 落地时定） | 2026-10-15 | ✅已完成(2026-10-17) |
 | users 相关代码适配（建表迁移已交付 2026-10-15）：注册/登录改「邮箱+密码」、注册接邮箱验证码、执行 `task db-gen` 并适配 store/handler 到新表结构 | 2026-10-15 | ✅已完成(2026-10-17) |
-| 会话模型代码适配（sessions 表迁移已交付 2026-10-15）：多端登录、(user_id, device_id) upsert、轮换原地更新 `token_hash`、改密/重置删全部会话、惰性过期清理；设备 ID 按方案 A 服务端生成/核对（取值优先级：请求体 > Gateway `did` cookie > 服务端生成 xid；Gateway 设 cookie + 登录响应回填前端 localStorage），详见 [data-model.md](data-model.md)「设备标识（device_id）口径」 | 2026-10-15 | ⬜待处理 |
 | Repository 服务实现（建表迁移已交付 2026-10-15：`pkg/db/migrations/ganrag_repository/0001-0005`；正文/附件走 Garage（S3，统一对象 key `o/<obj_xid>`）、互链即 Markdown 相对路径、接口用 xid，见 [database.md](database.md)「ganrag_repository」） | 2026-10-15 | ⬜待处理 |
 | AI 服务实现（建表迁移已交付 2026-10-15：`pkg/db/migrations/ganrag_ai/0001-0003`；消息信封 + 全量步骤存储对齐 UIMessage，见 [database.md](database.md)「ganrag_ai」） | 2026-10-15 | ⬜待处理 |
 | 对外接口 / proto 改用 xid——**剩余范围**：`chat_sessions` / `chat_messages` 接口 xid 化与前端联调适配（users / sessions 的 proto、JWT 口径已随「users 相关代码适配」于 2026-10-17 落地，对齐 AGENTS.md「业务主键（XID）规范」） | 2026-10-15 | ⬜待处理 |
@@ -27,3 +26,4 @@
 | Repository 服务架构文档补齐（[architecture.md](architecture.md)「各服务架构详情」现为 `-`） | 2026-10-15 | ✅已完成(2026-10-17) |
 | **【最高优先级·架构迁移】移除 File Store 服务，直连 Garage（S3）**：删除 `service/file-store/`、`api/proto/file-store/`、`api/gen/file-store/`；Repository 为唯一直接访问 Garage 的服务；单私有桶 + 统一对象 key `o/<object_xid>`；`attachments` 增 `relative_path`（迁移前先 `task db-status`）；前端 Markdown 相对路径 → Gateway `/api/v1/articles/{xid}/resource?path=` → Repository 权限校验 → Presigned URL 302；设计见 [service/repository/docs/architecture.md](../service/repository/docs/architecture.md)「对象存储与文件访问」 | 2026-10-17 | ✅已完成(2026-10-17) |
 | 公共业务主键封装（`pkg/eid`：github.com/rs/xid 生成 `<前缀>_<xid>`（3 字母小写前缀按实体类型区分，如 `usr_`/`art_`），库存全串 `xid VARCHAR(32)`（迁移 `0004/0007_xid_prefix`），各服务统一引用、不直接用裸 xid；实体创建接线随「users 相关代码适配」「Repository/AI 服务实现」各自落地） | 2026-10-15 | ✅已完成(2026-10-17) |
+| 会话模型代码适配（sessions 表迁移已交付 2026-10-15）：多端登录、(user_id, device_id) upsert、轮换原地更新 `token_hash`、改密/重置删全部会话、惰性过期清理；设备 ID 按方案 A 服务端生成/核对（取值优先级：请求体 > Gateway `did` cookie > 服务端生成 xid；Gateway 设 cookie + 登录响应回填前端 localStorage），详见 [data-model.md](data-model.md)「设备标识（device_id）口径」 | 2026-10-15 | ✅已完成(2026-10-17) |

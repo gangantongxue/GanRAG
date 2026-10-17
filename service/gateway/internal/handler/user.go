@@ -9,6 +9,7 @@ import (
 	"log/slog"
 
 	"github.com/cloudwego/hertz/pkg/app"
+	"github.com/cloudwego/hertz/pkg/protocol"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -48,8 +49,10 @@ type registerRequest struct {
 
 // loginRequest POST /api/v1/auth/login 请求体
 type loginRequest struct {
-	Email    string `json:"email"`
-	Password string `json:"password"`
+	Email      string `json:"email"`
+	Password   string `json:"password"`
+	DeviceID   string `json:"device_id"`   // 设备码（可选；前端 localStorage 回填）
+	DeviceInfo string `json:"device_info"` // 设备信息（可选；缺省取 User-Agent）
 }
 
 // refreshRequest POST /api/v1/auth/refresh 请求体
@@ -106,17 +109,58 @@ func (h *UserHandler) Register(ctx context.Context, c *app.RequestContext) {
 }
 
 // Login 登录（公开路由）
+//
+// 设备 ID 取值优先级（data-model.md「设备标识（device_id）口径」）：
+// 请求体（前端 localStorage）> did cookie > 留空由 user 服务生成；
+// 登录成功后 Set-Cookie did=（HttpOnly + SameSite=Lax，每次登录续期 1 年）。
 func (h *UserHandler) Login(ctx context.Context, c *app.RequestContext) {
 	var req loginRequest
 	if err := c.Bind(&req); err != nil {
 		writeError(c, 400, "请求体不合法")
 		return
 	}
+	deviceID := req.DeviceID
+	if deviceID == "" {
+		// 请求体缺失时读 did cookie 填入（不校验格式，由 user 服务权威核对）
+		deviceID = string(c.Cookie("did"))
+	}
+	deviceInfo := req.DeviceInfo
+	if deviceInfo == "" {
+		// 缺省取 User-Agent 截断 255 字符（仅设备列表展示用）
+		deviceInfo = truncateDeviceInfo(string(c.Request.Header.UserAgent()))
+	}
 	resp, err := h.client.Login(ctx, &userv1.LoginRequest{
-		Email:    req.Email,
-		Password: req.Password,
+		Email:      req.Email,
+		Password:   req.Password,
+		DeviceId:   deviceID,
+		DeviceInfo: deviceInfo,
 	})
+	if err == nil && resp.GetDeviceId() != "" {
+		// cookie 收敛为本次生效的设备码（与请求体不一致时以响应为准）
+		h.setDidCookie(c, resp.GetDeviceId())
+	}
 	h.respond(c, resp, err, "login")
+}
+
+// maxDeviceInfoLen 设备信息最大长度（对应 sessions.device_info VARCHAR(255)）
+const maxDeviceInfoLen = 255
+
+// truncateDeviceInfo 设备信息截断到 255 字符（按字符数，与 VARCHAR(255) 口径一致）
+func truncateDeviceInfo(s string) string {
+	r := []rune(s)
+	if len(r) > maxDeviceInfoLen {
+		return string(r[:maxDeviceInfoLen])
+	}
+	return s
+}
+
+// setDidCookie 设备码 cookie：HttpOnly + SameSite=Lax，Max-Age 1 年每次登录续期；
+// Secure 随请求是否 HTTPS 动态置位（生产 https 自动带，本地 http 开发不受影响）
+func (h *UserHandler) setDidCookie(c *app.RequestContext, deviceID string) {
+	https := string(c.Request.URI().Scheme()) == "https" ||
+		c.Request.Header.Get("X-Forwarded-Proto") == "https"
+	c.SetCookie("did", deviceID, 31536000, "/", "",
+		protocol.CookieSameSiteLaxMode, https, true)
 }
 
 // Refresh 刷新令牌对（公开路由，按设计必须绕过 access 校验）

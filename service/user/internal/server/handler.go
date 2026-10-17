@@ -159,14 +159,19 @@ func (h *Handler) Login(ctx context.Context, req *userv1.LoginRequest) (*userv1.
 		return nil, errUserDisabled
 	}
 
-	// 生成双 token 并建会话（惰性过期清理在 CreateSession 事务内）
+	// 生成双 token 并建会话（惰性过期清理在 UpsertSession 事务内）
 	pair, err := h.newPair(u)
 	if err != nil {
 		return nil, err
 	}
-	// device_id 本期服务端生成 dev_<xid>；方案 A 取值优先级（请求体 > Gateway did cookie >
-	// 服务端生成）与同设备 upsert 随「会话模型代码适配」落地
-	if err := h.st.CreateSession(ctx, u.ID, eid.New(eid.Device), "",
+	// 设备 ID 方案 A：合法请求值（请求体 > Gateway did cookie，合并见 Gateway）则沿用，
+	// 否则服务端生成 dev_<xid>；同设备重登 upsert 覆盖旧会话行
+	deviceID := req.DeviceId
+	if !validDeviceID(deviceID) {
+		deviceID = eid.New(eid.Device)
+	}
+	deviceInfo := truncateDeviceInfo(req.DeviceInfo)
+	if err := h.st.UpsertSession(ctx, u.ID, deviceID, deviceInfo,
 		auth.HashRefreshToken(pair.refresh), time.Now().Add(h.jwt.RefreshTTL)); err != nil {
 		return nil, errcode.Status(h.log, "Login/建立会话", err)
 	}
@@ -176,6 +181,7 @@ func (h *Handler) Login(ctx context.Context, req *userv1.LoginRequest) (*userv1.
 		RefreshToken:     pair.refresh,
 		AccessExpiresIn:  int64(h.jwt.AccessTTL.Seconds()),
 		RefreshExpiresIn: int64(h.jwt.RefreshTTL.Seconds()),
+		DeviceId:         deviceID,
 	}, nil
 }
 
@@ -316,6 +322,38 @@ func (h *Handler) newPair(u *dbmodel.User) (*tokenPair, error) {
 func validPassword(s string) bool {
 	n := utf8.RuneCountInString(s)
 	return n >= minPasswordLen && n <= maxPasswordLen
+}
+
+// maxDeviceIDLen 设备码最大长度（对应 sessions.device_id VARCHAR(64)）
+const maxDeviceIDLen = 64
+
+// maxDeviceInfoLen 设备信息最大长度（对应 sessions.device_info VARCHAR(255)）
+const maxDeviceInfoLen = 255
+
+// validDeviceID 校验设备码格式：1-64 位 [A-Za-z0-9_-]（data-model.md「设备标识（device_id）口径」）
+//
+// 不合法值不报错，由调用方换服务端生成，避免设备字段问题阻断登录。
+func validDeviceID(s string) bool {
+	if len(s) == 0 || len(s) > maxDeviceIDLen {
+		return false
+	}
+	for _, r := range s {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '_', r == '-':
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+// truncateDeviceInfo 设备信息截断到 255 字符（按字符数，与 VARCHAR(255) 口径一致）
+func truncateDeviceInfo(s string) string {
+	r := []rune(s)
+	if len(r) > maxDeviceInfoLen {
+		return string(r[:maxDeviceInfoLen])
+	}
+	return s
 }
 
 // userToProto 数据模型转 proto 消息（对外标识用 xid 全串，自增 id 不出服务）

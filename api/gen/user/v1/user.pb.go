@@ -311,6 +311,8 @@ type LoginRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Email         string                 `protobuf:"bytes,1,opt,name=email,proto3" json:"email,omitempty"`
 	Password      string                 `protobuf:"bytes,2,opt,name=password,proto3" json:"password,omitempty"`
+	DeviceId      string                 `protobuf:"bytes,3,opt,name=device_id,json=deviceId,proto3" json:"device_id,omitempty"`       // 设备码（可选；合法则沿用，否则服务端生成，口径见 docs/data-model.md「设备标识（device_id）口径」）
+	DeviceInfo    string                 `protobuf:"bytes,4,opt,name=device_info,json=deviceInfo,proto3" json:"device_info,omitempty"` // 设备信息（可选；前端展示名，缺省由 Gateway 取 User-Agent 截断 255）
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -359,6 +361,20 @@ func (x *LoginRequest) GetPassword() string {
 	return ""
 }
 
+func (x *LoginRequest) GetDeviceId() string {
+	if x != nil {
+		return x.DeviceId
+	}
+	return ""
+}
+
+func (x *LoginRequest) GetDeviceInfo() string {
+	if x != nil {
+		return x.DeviceInfo
+	}
+	return ""
+}
+
 type LoginResponse struct {
 	state            protoimpl.MessageState `protogen:"open.v1"`
 	User             *User                  `protobuf:"bytes,1,opt,name=user,proto3" json:"user,omitempty"`
@@ -366,6 +382,7 @@ type LoginResponse struct {
 	RefreshToken     string                 `protobuf:"bytes,3,opt,name=refresh_token,json=refreshToken,proto3" json:"refresh_token,omitempty"`                // 不透明串，7 天
 	AccessExpiresIn  int64                  `protobuf:"varint,4,opt,name=access_expires_in,json=accessExpiresIn,proto3" json:"access_expires_in,omitempty"`    // access 有效期（秒）
 	RefreshExpiresIn int64                  `protobuf:"varint,5,opt,name=refresh_expires_in,json=refreshExpiresIn,proto3" json:"refresh_expires_in,omitempty"` // refresh 有效期（秒）
+	DeviceId         string                 `protobuf:"bytes,6,opt,name=device_id,json=deviceId,proto3" json:"device_id,omitempty"`                            // 回填：本次生效的设备码（前端存 localStorage，Gateway 设 `did` cookie）
 	unknownFields    protoimpl.UnknownFields
 	sizeCache        protoimpl.SizeCache
 }
@@ -433,6 +450,13 @@ func (x *LoginResponse) GetRefreshExpiresIn() int64 {
 		return x.RefreshExpiresIn
 	}
 	return 0
+}
+
+func (x *LoginResponse) GetDeviceId() string {
+	if x != nil {
+		return x.DeviceId
+	}
+	return ""
 }
 
 type RefreshRequest struct {
@@ -753,16 +777,20 @@ const file_api_proto_user_v1_user_proto_rawDesc = "" +
 	"\bpassword\x18\x03 \x01(\tR\bpassword\x12\x1a\n" +
 	"\busername\x18\x04 \x01(\tR\busername\"5\n" +
 	"\x10RegisterResponse\x12!\n" +
-	"\x04user\x18\x01 \x01(\v2\r.user.v1.UserR\x04user\"@\n" +
+	"\x04user\x18\x01 \x01(\v2\r.user.v1.UserR\x04user\"~\n" +
 	"\fLoginRequest\x12\x14\n" +
 	"\x05email\x18\x01 \x01(\tR\x05email\x12\x1a\n" +
-	"\bpassword\x18\x02 \x01(\tR\bpassword\"\xd4\x01\n" +
+	"\bpassword\x18\x02 \x01(\tR\bpassword\x12\x1b\n" +
+	"\tdevice_id\x18\x03 \x01(\tR\bdeviceId\x12\x1f\n" +
+	"\vdevice_info\x18\x04 \x01(\tR\n" +
+	"deviceInfo\"\xf1\x01\n" +
 	"\rLoginResponse\x12!\n" +
 	"\x04user\x18\x01 \x01(\v2\r.user.v1.UserR\x04user\x12!\n" +
 	"\faccess_token\x18\x02 \x01(\tR\vaccessToken\x12#\n" +
 	"\rrefresh_token\x18\x03 \x01(\tR\frefreshToken\x12*\n" +
 	"\x11access_expires_in\x18\x04 \x01(\x03R\x0faccessExpiresIn\x12,\n" +
-	"\x12refresh_expires_in\x18\x05 \x01(\x03R\x10refreshExpiresIn\"5\n" +
+	"\x12refresh_expires_in\x18\x05 \x01(\x03R\x10refreshExpiresIn\x12\x1b\n" +
+	"\tdevice_id\x18\x06 \x01(\tR\bdeviceId\"5\n" +
 	"\x0eRefreshRequest\x12#\n" +
 	"\rrefresh_token\x18\x01 \x01(\tR\frefreshToken\"\xb3\x01\n" +
 	"\x0fRefreshResponse\x12!\n" +
