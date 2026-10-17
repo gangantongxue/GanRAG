@@ -211,7 +211,7 @@ message RevokeSessionResponse {}
 | ListSessions / RevokeSession | user_id 由 Gateway 注入；session_id 需归属该用户 | `InvalidArgument`；`NotFound` 会话不存在（「登录设备管理接口」） |
 
 - Login 不区分「邮箱不存在」与「密码错误」，防止账号枚举；Register / ResetPassword 同样不回传「邮箱是否已注册」等可枚举信息
-- 所有接口错误细节只写日志，不回传内部信息（与 vector-store / file-store 约定一致）
+- 所有接口错误细节只写日志，不回传内部信息（与 vector-store 约定一致）
 
 ## 数据存储
 
@@ -351,8 +351,9 @@ services:
 | user | 50051 | gRPC | 已实现（2026-10-09） |
 | repository | 50052 | gRPC | 未实现 |
 | vector-store | 50053 | gRPC | 已实现 |
-| file-store | 50054 | gRPC | 已实现 |
 | ai | 50055 | gRPC | 未实现 |
+
+> 原 file-store（50054）已随 2026-10-17 架构迁移移除（对象存储改用 Garage，见 [repository 架构文档](../../repository/docs/architecture.md)）。
 
 ## 目录结构
 

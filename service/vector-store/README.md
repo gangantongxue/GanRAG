@@ -77,7 +77,7 @@ log:
 所有配置项均可用 `GANRAG_` 前缀的环境变量覆盖（嵌套用下划线），例如：
 
 ```bash
-GANRAG_SERVER_PORT=50054 GANRAG_STORAGE_MODE=memory go run ./cmd/server
+GANRAG_SERVER_PORT=50060 GANRAG_STORAGE_MODE=memory go run ./cmd/server
 ```
 
 ## gRPC 接口

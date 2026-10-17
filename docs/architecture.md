@@ -177,8 +177,8 @@ Go 标准库结构化日志 + 日志文件轮转：
 
 | 设计项 | 状态 | 阶段 | 详见 |
 |--------|------|------|------|
-| **移除 File Store，直连 Garage（S3）单桶 + Presigned URL 文件访问** | 📝 设计定稿，代码未实现（最高优先级） | P1 架构迁移 | [service/repository/docs/architecture.md](../../service/repository/docs/architecture.md)（「架构迁移（移除 File Store 直连 Garage）」） |
-| Markdown 相对路径解析与 `attachments.relative_path` | 📝 设计定稿，代码未实现 | P1 架构迁移 | [service/repository/docs/architecture.md](../../service/repository/docs/architecture.md)、[data-model.md](data-model.md)（「架构迁移（移除 File Store 直连 Garage）」） |
+| **移除 File Store，直连 Garage（S3）单桶 + Presigned URL 文件访问** | 🔨 实现中（架构迁移已落地 2026-10-17：File Store 已移除、0006 已迁移、Garage 基础设施就绪；Presigned 读取与资源接口随「Repository 服务实现」落地） | P1 架构迁移 | [service/repository/docs/architecture.md](../../service/repository/docs/architecture.md)（「架构迁移（移除 File Store 直连 Garage）」） |
+| Markdown 相对路径解析与 `attachments.relative_path` | 🔨 实现中（`relative_path` 已随 0006 落库 2026-10-17；解析逻辑随 Repository / 前端实现） | P1 架构迁移 | [service/repository/docs/architecture.md](../../service/repository/docs/architecture.md)、[data-model.md](data-model.md)（「架构迁移（移除 File Store 直连 Garage）」） |
 | 多智能体路由与切换（Decima-small） | 📝 设计定稿，代码未实现 | P1.5 | [service/ai/docs/architecture.md](../../service/ai/docs/architecture.md)（「多智能体路由与切换」） |
 | 上下文压缩（会话级 context + 消息游标 + 隐藏 Agent 提示词） | 📝 设计定稿，代码未实现 | P1.5 | [service/ai/docs/architecture.md](../../service/ai/docs/architecture.md)、[data-model.md](data-model.md)（「上下文压缩」） |
 | 多路召回聚合与 Decima-small 相关性审查 | 📝 设计定稿，代码未实现 | P3 | [service/ai/docs/architecture.md](../../service/ai/docs/architecture.md)（「多路召回聚合与检索权重接入」） |
@@ -228,3 +228,4 @@ Go 标准库结构化日志 + 日志文件轮转：
 | 2026-10-17 | 对象存储采用「单共享桶私有 + 统一对象 key `o/<object_xid>`」，不按知识库分桶、不设图片专属目录 | 「共享桶」≠ 匿名公开桶，桶 ACL 私有防绕过 Gateway；统一 key 与目录/重命名/知识库迁移解耦，迁移 S3 时 key 原样平移 |
 | 2026-10-17 | 文件访问走「Gateway 稳定路由 → Repository 权限校验 → Presigned URL 302」；Markdown 内只写相对路径，前端渲染时以当前文章为基准解析并拼 Gateway 地址 | 权限判定收敛 Repository（知识库领域边界），Gateway 不复制规则；相对路径由 Repository 再规范化校验防越权；Markdown 不存 Presigned URL（会过期）；详见 service/repository/docs/architecture.md |
 | 2026-10-17 | `attachments` 增 `relative_path`（article_id + relative_path 唯一），支撑「当前文章 + 相对路径」稳定找回对象；迁移前先 `task db-status`，已应用迁移禁改，新增 up/down 成对 | 用户自定义 Markdown 相对引用需持久化才能渲染期解析；见 docs/data-model.md「ganrag_repository」 |
+| 2026-10-17 | Garage 不启用 s3_web 网页托管展示模块（无 3902 端口）；数据卷 named volume 持久化，garage.toml 经 compose configs 注入、密钥走 .env，首启 `--single-node --default-bucket` 自动建桶与密钥 | 内容只经 S3 API 读取，桶私有无网站托管需求，省一个常驻监听模块；重启/重建容器不丢数据，秘密不入库 |

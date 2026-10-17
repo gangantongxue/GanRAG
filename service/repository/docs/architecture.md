@@ -4,7 +4,7 @@
 
 Repository 服务是知识库、目录树、文章、附件的业务边界，也是**对象存储（Garage，S3 协议）的唯一直接访问方**。前端不接触 S3 凭证，Gateway 不持有 S3 凭证，二者都通过 Repository 完成文件的权限校验与读取授权。
 
-> **落地状态：设计定稿，代码未实现**——实现后更新根 [docs/architecture.md](../../../docs/architecture.md)「设计落地状态」。整体架构迁移跟踪见 [docs/todo.md](../../../docs/todo.md) 「架构迁移（移除 File Store 直连 Garage）」。
+> **落地状态**：架构迁移已落地（2026-10-17）——File Store 已移除、`attachments.relative_path` 已随迁移 0006 落库、Garage 基础设施就绪（compose 编排、自动建桶与密钥、数据卷持久化）；**Garage 读写与资源接口代码随「Repository 服务实现」落地**。跟踪见 [docs/todo.md](../../../docs/todo.md)。
 
 ## 对象存储与文件访问（P1 核心，架构迁移最高优先级）
 
@@ -148,18 +148,19 @@ S3 调用统一带 context 超时；写入、删除、Head、List 均有限制�
 
 ## 部署（根 docker-compose.yml）
 
-单节点 Garage 服务，独立持久化卷（meta / data），与 Repository 同 `ganrag` 网络：
+单节点 Garage 服务（`dxflrs/garage`），named volume 持久化（meta / data，容器重启、重建、`down` 均不丢数据），与 Repository 同 `ganrag` 网络；garage.toml 由 compose `configs` 注入（敏感值经 `.env` 插值，镜像 `FROM scratch` 无 shell，不做容器内渲染）：
 
 | 端口 | 用途 |
 |------|------|
-| 3900 | S3 API（仅内网，Repository 访问） |
-| 3901 | RPC |
-| 3902 | Web |
-| 3903 | Admin API |
+| 3900 | S3 API（Repository 访问；dev 映射 127.0.0.1 供 Presigned URL 浏览器可达，生产可不映射、走「Gateway 流式返回」降级） |
+| 3901 | RPC（仅容器网络内） |
+| 3903 | Admin API（绑定 127.0.0.1，运维用） |
 
+不启用 s3_web（3902 网页托管展示模块）：内容只经 S3 API 读取，省一个常驻监听模块。
+首次启动 `server --single-node --default-bucket` 按 `GARAGE_DEFAULT_*` 自动创建默认 Access Key 与私有桶。
 默认 Access Key / Secret Key / Bucket 由 `.env` 注入，不进仓库。
 
-## 移除 File Store 的范围
+## 移除 File Store 的范围（✅ 已完成 2026-10-17）
 
 删除：
 
@@ -174,6 +175,6 @@ S3 调用统一带 context 超时；写入、删除、Head、List 均有限制�
 
 按 [docs/todo.md](../../../docs/todo.md) 优先级顺序：
 
-- 「架构迁移（移除 File Store 直连 Garage）」（最高优先级）
+- 「架构迁移（移除 File Store 直连 Garage）」（✅已完成 2026-10-17）
 - 「Repository 服务实现」
 - 「Repository 服务架构文档补齐」（✅已完成，本文件即补齐内容）

@@ -32,10 +32,14 @@ type schemaSpec struct {
 // schemata 全部待生成的库
 //
 // 显式白名单避免把 golang-migrate 的 schema_migrations 版本表生成进来；
-// migrations/ 下新增库目录时必须在此登记，否则生成报错。
+// migrations/ 下新增库目录时必须在此登记，否则生成报错；
+// Tables 为空表示「已登记、暂不生成」（迁移照常同步），生成循环会跳过该库。
 var schemata = []schemaSpec{
-	{DBName: "ganrag_user", Tables: []string{"users", "refresh_tokens", "user_follows"}},
-	// 未来：ganrag_repository、ganrag_ai 在对应服务落地时登记
+	// user 服务代码仍基于旧 refresh_tokens 生成物（todo「users 相关代码适配」「会话模型代码适配」
+	// 改用 sessions 表时补全清单并全量生成）；现在重新生成会让 user 服务编译中断，故暂置空跳过
+	{DBName: "ganrag_user", Tables: nil},
+	{DBName: "ganrag_repository", Tables: []string{"knowledge_bases", "directories", "articles", "attachments", "kb_user_relations"}},
+	{DBName: "ganrag_ai", Tables: []string{"chat_sessions", "chat_messages", "chat_message_parts"}},
 }
 
 func main() {
@@ -83,6 +87,14 @@ func run() error {
 		gdb, err := db.Open(cfg)
 		if err != nil {
 			return fmt.Errorf("打开库 %s 失败: %w", s.DBName, err)
+		}
+		if len(s.Tables) == 0 {
+			// 表清单暂未登记（见 schemata 注释）；上面 db.Open 已完成迁移同步，只需跳过生成
+			if err := db.Close(gdb); err != nil {
+				return err
+			}
+			fmt.Printf("库 %s: 表清单暂未登记，跳过生成（迁移已同步）\n", s.DBName)
+			continue
 		}
 		if err := generate(gdb, s); err != nil {
 			_ = db.Close(gdb)

@@ -88,7 +88,7 @@ tasks:
         cmd: task -d "service/{{.ITEM}}" stop
 
   infra:
-    desc: 启动共享基础设施（MySQL）
+    desc: 启动共享基础设施（MySQL、Garage；数据卷持久化）
     cmds:
       # ganrag 网络为外部共享（compose 与各服务 run.sh 共用），不存在时先创建
       - docker network inspect ganrag >/dev/null 2>&1 || docker network create ganrag

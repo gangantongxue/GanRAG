@@ -26,7 +26,7 @@ RAG（检索增强生成）是实现「基于用户自己的知识回答问题�
 │   ├── repository/       # 知识库服务
 │   ├── vector-store/     # 向量存储服务（chromem-go + gRPC）
 │   └── (对象存储 = Garage S3，外部基础设施，不在 service/ 下)
-├── docker-compose.yml    # 基础设施编排（MySQL，task infra 启动）
+├── docker-compose.yml    # 基础设施编排（MySQL、Garage，task infra 启动）
 ├── Taskfile.yml          # 根 Taskfile：统一编排
 └── web/                  # 前端
 ```
@@ -47,7 +47,7 @@ RAG（检索增强生成）是实现「基于用户自己的知识回答问题�
 | 命令 | 说明 |
 |------|------|
 | `task proto` | 生成所有服务的 Proto Go 代码（api/gen） |
-| `task infra` / `task infra-down` | 启动 / 停止共享基础设施（MySQL） |
+| `task infra` / `task infra-down` | 启动 / 停止共享基础设施（MySQL、Garage；数据卷保留不丢数据） |
 | `task db-up` | 将全部库同步到最新 SQL 迁移（golang-migrate up，幂等） |
 | `task db-status` | 查看各库当前迁移版本与「可修改 / 已应用锁定」的 SQL 文件 |
 | `task db-gen` | 同步迁移后用 gorm gen 生成数据库 model/query 代码 |
@@ -121,7 +121,7 @@ go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@v1.6.2
 
 ```bash
 cp .env.example .env   # 设置 MySQL 密码（.env 已 gitignore，首次执行）
-task infra             # 启动 MySQL（docker compose）
+task infra             # 启动 MySQL、Garage（docker compose）
 task db-up             # 建库并同步全部 SQL 迁移
 task db-gen            # gorm gen 生成 model/query（pkg/db/model、pkg/db/query，提交入库）
 task db-status         # 查看当前迁移版本与「可修改 / 已应用锁定」的 SQL 文件
@@ -130,6 +130,23 @@ task db-status         # 查看当前迁移版本与「可修改 / 已应用锁�
 - SQL 迁移唯一事实来源在 `pkg/db/migrations/<库名>/`（up/down 成对），各服务启动时按配置自动执行（`database.auto_migrate`）
 - **修改 SQL 前必须先 `task db-status` 确认可修改性**——已应用的迁移文件禁止修改，变更一律新增迁移；完整规范见 [AGENTS.md](AGENTS.md)「SQL 迁移修改规范」
 - 详见 [pkg/db/README.md](pkg/db/README.md)
+
+## 对象存储（Garage，S3 协议）
+
+首次执行时在 `.env` 生成 Garage 密钥（模板与说明见 [.env.example](.env.example)）：
+
+```bash
+# GARAGE_RPC_SECRET=$(openssl rand -hex 32)
+# GARAGE_ADMIN_TOKEN=$(openssl rand -base64 32)
+# GARAGE_DEFAULT_ACCESS_KEY="GK$(openssl rand -hex 16)"
+# GARAGE_DEFAULT_SECRET_KEY=$(openssl rand -hex 32)
+task infra             # 首次启动自动创建默认 S3 密钥与私有桶（GARAGE_DEFAULT_BUCKET，默认 ganrag-objects）
+```
+
+- 单私有桶 + 统一对象 key `o/<object_xid>`，Repository 为唯一直接访问方；S3 凭证只在 `.env`（不入库、不进前端、不进 Gateway）
+- 数据存 named volume（`garage-meta` / `garage-data`），容器重启、重建与 `task infra-down` 均不丢数据；仅显式 `docker compose down -v` 会清空
+- 端口：3900 S3（绑定 127.0.0.1，供 Presigned URL 浏览器可达）、3903 管理 API；3901 RPC 仅容器网络内；s3_web（3902 网页托管展示）不启用
+- 设计详见 [service/repository/docs/architecture.md](service/repository/docs/architecture.md)「对象存储与文件访问」
 
 ## 开发
 

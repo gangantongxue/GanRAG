@@ -7,3 +7,4 @@
 | ID | 记录 | 登记日期 | 状态 |
 |----|------|---------|------|
 | FIX-001 | `refresh_tokens` 含物理外键 `fk_refresh_tokens_user`，违反「禁止物理外键」规则 → 随 2026-10-15 迁移基线重写消除（数据盘已清、旧迁移全删重写，新迁移无 `refresh_tokens`、全部无外键） | 2026-10-15 | ✅已完成(2026-10-15) |
+| FIX-002 | `task db-gen` 报错「迁移目录 ganrag_ai 未在 pkg/db/gen 的 schemata 中登记表清单」：2026-10-15 交付 `ganrag_ai`/`ganrag_repository` 迁移后未登记 schemata，db-gen 全程不可用，违反「表结构变更后必须 task db-gen」规则 | 2026-10-17 | ✅已完成(2026-10-17) |

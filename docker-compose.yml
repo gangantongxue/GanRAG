@@ -1,14 +1,22 @@
-# GanRAG 基础设施编排：MySQL（user / repository 等多个服务共享，不属于单一服务）
+# GanRAG 基础设施编排：MySQL（多服务共享数据库）+ Garage（S3 对象存储，Repository 唯一直连）
 #
 # 用法：
 #   task infra        启动（后台，healthcheck 就绪后可执行 task db-up）
-#   task infra-down   停止（数据卷 mysql-data 保留）
+#   task infra-down   停止（数据卷保留，数据不丢）
+#
+# 数据持久化：全部数据存 named volume（mysql-data / garage-meta / garage-data），
+# 容器重启、重建、docker compose down 均不丢数据；只有显式 `docker compose down -v`
+# 才会删除数据卷（会清空全部数据，慎用）。
 #
 # 连接参数来自仓库根 .env（已 gitignore，模板见 .env.example）：
 #   MYSQL_ROOT_PASSWORD   root 密码（仅容器初始化用）
 #   GANRAG_DB_USER        应用账号（默认 ganrag，task db-* 与各服务共用）
 #   GANRAG_DB_PASSWORD    应用账号密码
 #   GANRAG_DB_PORT        宿主机映射端口（默认 3306，也是 task db-* 连接的端口）
+#   GARAGE_RPC_SECRET     Garage 集群内部 RPC 密钥（openssl rand -hex 32）
+#   GARAGE_ADMIN_TOKEN    Garage 管理 API token（openssl rand -base64 32）
+#   GARAGE_DEFAULT_ACCESS_KEY / GARAGE_DEFAULT_SECRET_KEY / GARAGE_DEFAULT_BUCKET
+#                         首次启动自动创建的 S3 密钥与桶（桶私有；AK/SK 只进 .env）
 services:
   mysql:
     image: mysql:8.0
@@ -35,8 +43,67 @@ services:
       timeout: 3s
       retries: 30
 
+  # Garage：S3 协议对象存储（官方镜像 FROM scratch，无 shell，配置由 compose configs 注入）
+  # 单私有桶 + 统一对象 key o/<object_xid>，Repository 为唯一直接访问方，S3 凭证不下发任何其他方
+  garage:
+    image: dxflrs/garage:v2.4.1
+    container_name: ganrag-garage
+    restart: unless-stopped
+    # 镜像无 ENTRYPOINT（FROM scratch），需显式指定二进制路径
+    # --single-node：单节点自动建集群布局；--default-bucket：按 GARAGE_DEFAULT_* 自动建默认 key 与桶
+    command: ["/garage", "server", "--single-node", "--default-bucket"]
+    environment:
+      GARAGE_DEFAULT_ACCESS_KEY: ${GARAGE_DEFAULT_ACCESS_KEY:?请在 .env 设置 GARAGE_DEFAULT_ACCESS_KEY}
+      GARAGE_DEFAULT_SECRET_KEY: ${GARAGE_DEFAULT_SECRET_KEY:?请在 .env 设置 GARAGE_DEFAULT_SECRET_KEY}
+      GARAGE_DEFAULT_BUCKET: ${GARAGE_DEFAULT_BUCKET:-ganrag-objects}
+    configs:
+      - source: garage-config
+        target: /etc/garage.toml
+    ports:
+      # 3900 S3：绑定 127.0.0.1 仅供 Presigned URL 浏览器可达（dev）；生产可不映射，走 Gateway 流式降级
+      - "127.0.0.1:3900:3900"
+      # 3903 管理 API：绑定 127.0.0.1 供运维使用；3901 RPC 仅容器网络内，s3_web（3902）已砍不启用
+      - "127.0.0.1:3903:3903"
+    volumes:
+      # 元数据与数据分卷持久化，路径必须与 garage.toml 的 metadata_dir / data_dir 一致
+      - garage-meta:/var/lib/garage/meta
+      - garage-data:/var/lib/garage/data
+    networks:
+      - ganrag
+    healthcheck:
+      test: ["CMD", "/garage", "status"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
+configs:
+  # garage.toml 敏感值经 .env 插值注入，仓库内不落明文（镜像无 shell，无法容器内渲染模板）
+  garage-config:
+    content: |
+      metadata_dir = "/var/lib/garage/meta"
+      data_dir = "/var/lib/garage/data"
+      db_engine = "sqlite"
+      replication_factor = 1
+      rpc_bind_addr = "0.0.0.0:3901"
+      rpc_secret = "${GARAGE_RPC_SECRET:?请在 .env 设置 GARAGE_RPC_SECRET}"
+
+      [s3_api]
+      s3_region = "garage"
+      api_bind_addr = "0.0.0.0:3900"
+      root_domain = ".s3.garage.localhost"
+      # 对外通告地址（Presigned URL / 重定向），dev 为宿主机映射地址
+      advertise_endpoint = "http://127.0.0.1:3900"
+
+      # 故意不启用 [s3_web]（网页托管展示模块）：内容只经 S3 API 读取，省一个常驻监听模块
+
+      [admin]
+      api_bind_addr = "0.0.0.0:3903"
+      admin_token = "${GARAGE_ADMIN_TOKEN:?请在 .env 设置 GARAGE_ADMIN_TOKEN}"
+
 volumes:
   mysql-data:
+  garage-meta:
+  garage-data:
 
 networks:
   ganrag:

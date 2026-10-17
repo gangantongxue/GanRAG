@@ -182,6 +182,7 @@ CREATE TABLE attachments (
   created_at    DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (id),
   UNIQUE KEY uk_attachments_xid (xid),
+  UNIQUE KEY uk_attachments_article_path (article_id, relative_path),
   KEY idx_attachments_article (article_id, kind),
   KEY idx_attachments_kb (kb_id)
 );

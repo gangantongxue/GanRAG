@@ -7,7 +7,7 @@
 | Schema | 拥有者 | 表 | 迁移位置 |
 |--------|--------|----|----------|
 | `ganrag_user` | User 服务 | users、sessions、user_follows | `pkg/db/migrations/ganrag_user/`（0001-0003） |
-| `ganrag_repository` | Repository 服务 | knowledge_bases、directories、articles、attachments、kb_user_relations | `pkg/db/migrations/ganrag_repository/`（0001-0005） |
+| `ganrag_repository` | Repository 服务 | knowledge_bases、directories、articles、attachments、kb_user_relations | `pkg/db/migrations/ganrag_repository/`（0001-0006） |
 | `ganrag_ai` | AI 服务 | chat_sessions、chat_messages、chat_message_parts | `pkg/db/migrations/ganrag_ai/`（0001-0003） |
 
 ## 通用约定
