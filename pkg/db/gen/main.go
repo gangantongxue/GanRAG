@@ -35,9 +35,9 @@ type schemaSpec struct {
 // migrations/ 下新增库目录时必须在此登记，否则生成报错；
 // Tables 为空表示「已登记、暂不生成」（迁移照常同步），生成循环会跳过该库。
 var schemata = []schemaSpec{
-	// user 服务代码仍基于旧 refresh_tokens 生成物（todo「users 相关代码适配」「会话模型代码适配」
-	// 改用 sessions 表时补全清单并全量生成）；现在重新生成会让 user 服务编译中断，故暂置空跳过
-	{DBName: "ganrag_user", Tables: nil},
+	// ganrag_user：users/sessions/user_follows 全量生成（refresh_tokens 已随迁移基线删除，
+	// 旧 refresh_tokens.gen.go 残留文件须手动删除，gen 不清理不再生成的旧文件）
+	{DBName: "ganrag_user", Tables: []string{"users", "sessions", "user_follows"}},
 	{DBName: "ganrag_repository", Tables: []string{"knowledge_bases", "directories", "articles", "attachments", "kb_user_relations"}},
 	{DBName: "ganrag_ai", Tables: []string{"chat_sessions", "chat_messages", "chat_message_parts"}},
 }

@@ -9,26 +9,28 @@ import (
 
 	dbmodel "github.com/gangantongxue/GanRAG/pkg/db/model/ganrag_user"
 	dbquery "github.com/gangantongxue/GanRAG/pkg/db/query/ganrag_user"
+	"github.com/gangantongxue/GanRAG/pkg/eid"
 )
 
 // CreateUser 创建用户
 //
 // 先查后插保证唯一性提示友好，唯一索引兜底并发竞态（gorm.ErrDuplicatedKey 映射）。
+// 业务主键由 pkg/eid 生成（usr_<xid> 全串入库，对外标识）。
 //
 // 参数：
 //   - ctx: 上下文
-//   - username: 用户名（3-32 字符，调用方已校验格式）
+//   - email: 邮箱（归一后值，调用方已校验格式）
+//   - username: 展示名（可空，≤64 字符，调用方已校验）
 //   - passwordHash: bcrypt 密码哈希
-//   - nickname: 昵称（首期默认等于用户名）
 //
 // 返回：
 //   - *dbmodel.User: 创建成功的用户（含自增 ID 与时间戳）
-//   - error: 用户名冲突返回 ErrUsernameTaken，其余为数据库错误
-func (s *Store) CreateUser(ctx context.Context, username, passwordHash, nickname string) (*dbmodel.User, error) {
+//   - error: 邮箱冲突返回 ErrEmailTaken，其余为数据库错误
+func (s *Store) CreateUser(ctx context.Context, email, username, passwordHash string) (*dbmodel.User, error) {
 	q := s.q
-	_, err := q.User.WithContext(ctx).Where(q.User.Username.Eq(username)).First()
+	_, err := q.User.WithContext(ctx).Where(q.User.Email.Eq(email)).First()
 	if err == nil {
-		return nil, ErrUsernameTaken
+		return nil, ErrEmailTaken
 	}
 	if !errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, err
@@ -36,9 +38,10 @@ func (s *Store) CreateUser(ctx context.Context, username, passwordHash, nickname
 
 	now := time.Now()
 	u := &dbmodel.User{
+		Xid:          eid.New(eid.User),
+		Email:        email,
 		Username:     username,
 		PasswordHash: passwordHash,
-		Nickname:     nickname,
 		Status:       StatusNormal,
 		// 显式赋值：列带 default:CURRENT_TIMESTAMP 时 GORM 会跳过该列并不回填零值字段，
 		// 导致返回给调用方的时间戳为零值
@@ -48,18 +51,18 @@ func (s *Store) CreateUser(ctx context.Context, username, passwordHash, nickname
 	if err := q.User.WithContext(ctx).Create(u); err != nil {
 		// 并发下唯一索引冲突兜底（pkg/db.Open 已开启 TranslateError）
 		if errors.Is(err, gorm.ErrDuplicatedKey) {
-			return nil, ErrUsernameTaken
+			return nil, ErrEmailTaken
 		}
 		return nil, err
 	}
 	return u, nil
 }
 
-// GetUserByID 按 ID 查询用户
+// GetUserByID 按自增 ID 查询用户（服务内部使用，如 sessions.user_id 关联回查）
 //
 // 参数：
 //   - ctx: 上下文
-//   - id: 用户 ID
+//   - id: 用户自增 ID
 //
 // 返回：
 //   - *dbmodel.User: 查询到的用户
@@ -69,17 +72,31 @@ func (s *Store) GetUserByID(ctx context.Context, id int64) (*dbmodel.User, error
 	return mapUser(u, err)
 }
 
-// GetUserByUsername 按用户名查询用户
+// GetUserByXID 按业务主键查询用户（对外接口入参口径）
 //
 // 参数：
 //   - ctx: 上下文
-//   - username: 用户名（走唯一索引，单条级查询）
+//   - xid: 用户业务主键 usr_<xid> 全串（调用方已用 eid.Match 校验）
+//
+// 返回：
+//   - *dbmodel.User: 查询到的用户（含密码哈希，仅供登录/改密校验）
+//   - error: 目标不存在返回 ErrUserNotFound
+func (s *Store) GetUserByXID(ctx context.Context, xid string) (*dbmodel.User, error) {
+	u, err := s.q.User.WithContext(ctx).Where(s.q.User.Xid.Eq(xid)).First()
+	return mapUser(u, err)
+}
+
+// GetUserByEmail 按邮箱查询用户（登录标识，走唯一索引）
+//
+// 参数：
+//   - ctx: 上下文
+//   - email: 邮箱（归一后值）
 //
 // 返回：
 //   - *dbmodel.User: 查询到的用户（含密码哈希，仅供登录校验）
 //   - error: 目标不存在返回 ErrUserNotFound
-func (s *Store) GetUserByUsername(ctx context.Context, username string) (*dbmodel.User, error) {
-	u, err := s.q.User.WithContext(ctx).Where(s.q.User.Username.Eq(username)).First()
+func (s *Store) GetUserByEmail(ctx context.Context, email string) (*dbmodel.User, error) {
+	u, err := s.q.User.WithContext(ctx).Where(s.q.User.Email.Eq(email)).First()
 	return mapUser(u, err)
 }
 
@@ -102,13 +119,14 @@ func mapUser(u *dbmodel.User, err error) (*dbmodel.User, error) {
 	return u, nil
 }
 
-// UpdatePassword 更新密码哈希并吊销该用户全部 refresh token
+// UpdatePassword 更新密码哈希并删除该用户全部 sessions 行
 //
-// 同一事务内完成：改密成功后旧 refresh 全部失效，已登录会话在 access 过期（≤15 分钟）后需重新登录。
+// 同一事务内完成：改密成功后全部登录会话失效，已登录会话在 access 过期（≤15 分钟）
+// 后需重新登录（改密/找回密码删全部会话，见 data-model.md「sessions 登录会话」）。
 //
 // 参数：
 //   - ctx: 上下文
-//   - userID: 用户 ID
+//   - userID: 用户自增 ID
 //   - passwordHash: 新密码的 bcrypt 哈希
 //
 // 返回：
@@ -125,8 +143,7 @@ func (s *Store) UpdatePassword(ctx context.Context, userID int64, passwordHash s
 		if info.RowsAffected == 0 {
 			return ErrUserNotFound
 		}
-		// 改密后吊销该用户全部 refresh token
-		_, err = q.RefreshToken.WithContext(ctx).Where(q.RefreshToken.UserID.Eq(userID)).Delete()
-		return err
+		// 改密后删除该用户全部登录会话
+		return DeleteUserSessions(ctx, q, userID)
 	})
 }

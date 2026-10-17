@@ -5,7 +5,6 @@ import (
 	"io"
 	"log/slog"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -21,6 +20,7 @@ import (
 
 	userv1 "github.com/gangantongxue/GanRAG/api/gen/user/v1"
 	dbmodel "github.com/gangantongxue/GanRAG/pkg/db/model/ganrag_user"
+	"github.com/gangantongxue/GanRAG/pkg/eid"
 	"github.com/gangantongxue/GanRAG/service/user/internal/auth"
 	"github.com/gangantongxue/GanRAG/service/user/internal/config"
 	"github.com/gangantongxue/GanRAG/service/user/internal/store"
@@ -41,7 +41,8 @@ const (
 // 返回：
 //   - *Handler: 待测 handler
 //   - *gorm.DB: 底层连接（直接 SQL 改状态 / 断言用）
-func newTestHandler(t *testing.T) (*Handler, *gorm.DB) {
+//   - *miniredis.Miniredis: 内存 Redis（快进时钟绕过 60s 发送限频）
+func newTestHandler(t *testing.T) (*Handler, *gorm.DB, *miniredis.Miniredis) {
 	t.Helper()
 	db, err := gorm.Open(sqlite.Open(filepath.Join(t.TempDir(), "test.db")), &gorm.Config{
 		TranslateError: true,
@@ -51,7 +52,7 @@ func newTestHandler(t *testing.T) (*Handler, *gorm.DB) {
 	if err != nil {
 		t.Fatalf("打开 SQLite 失败: %v", err)
 	}
-	if err := db.AutoMigrate(&dbmodel.User{}, &dbmodel.RefreshToken{}, &dbmodel.UserFollow{}); err != nil {
+	if err := db.AutoMigrate(&dbmodel.User{}, &dbmodel.Session{}, &dbmodel.UserFollow{}); err != nil {
 		t.Fatalf("建表失败: %v", err)
 	}
 
@@ -67,25 +68,44 @@ func newTestHandler(t *testing.T) (*Handler, *gorm.DB) {
 	mr := miniredis.RunT(t)
 	rdb := goredis.NewClient(&goredis.Options{Addr: mr.Addr()})
 	t.Cleanup(func() { _ = rdb.Close() })
-	return NewHandler(store.New(db), jwtCfg, auth.NewEmailCode(rdb), auth.NewMailer(config.MailConfig{}, log), log), db
+	return NewHandler(store.New(db), jwtCfg, auth.NewEmailCode(rdb), auth.NewMailer(config.MailConfig{}, log), log), db, mr
 }
 
-// mustRegister 注册用户，失败则终止测试
-func mustRegister(t *testing.T, h *Handler, username, password string) int64 {
+// mustIssueCode 生成并落库邮箱验证码，返回明文码（测试直接取码，跳过邮件通道）
+//
+// 先快进 miniredis 时钟 61s 过期发送限频键，用例内可对同邮箱反复取码。
+func mustIssueCode(t *testing.T, h *Handler, mr *miniredis.Miniredis, scene, email string) string {
 	t.Helper()
-	resp, err := h.Register(context.Background(), &userv1.RegisterRequest{Username: username, Password: password})
+	mr.FastForward(time.Minute + time.Second)
+	code, err := h.codes.Issue(context.Background(), scene, email)
 	if err != nil {
-		t.Fatalf("Register(%s) 错误: %v", username, err)
+		t.Fatalf("Issue(%s, %s) 错误: %v", scene, email, err)
 	}
-	return resp.User.Id
+	return code
+}
+
+// mustRegister 注册用户，失败则终止测试（自动先取邮箱验证码）
+//
+// 返回：
+//   - *userv1.User: 注册返回的用户
+func mustRegister(t *testing.T, h *Handler, mr *miniredis.Miniredis, email, username, password string) *userv1.User {
+	t.Helper()
+	code := mustIssueCode(t, h, mr, auth.SceneRegister, email)
+	resp, err := h.Register(context.Background(), &userv1.RegisterRequest{
+		Email: email, Code: code, Password: password, Username: username,
+	})
+	if err != nil {
+		t.Fatalf("Register(%s) 错误: %v", email, err)
+	}
+	return resp.User
 }
 
 // mustLogin 登录并返回响应，失败则终止测试
-func mustLogin(t *testing.T, h *Handler, username, password string) *userv1.LoginResponse {
+func mustLogin(t *testing.T, h *Handler, email, password string) *userv1.LoginResponse {
 	t.Helper()
-	resp, err := h.Login(context.Background(), &userv1.LoginRequest{Username: username, Password: password})
+	resp, err := h.Login(context.Background(), &userv1.LoginRequest{Email: email, Password: password})
 	if err != nil {
-		t.Fatalf("Login(%s) 错误: %v", username, err)
+		t.Fatalf("Login(%s) 错误: %v", email, err)
 	}
 	return resp
 }
@@ -101,21 +121,33 @@ func assertCode(t *testing.T, err error, want codes.Code, what string) {
 	}
 }
 
-// TestRegister 校验注册：合法通过、参数校验、用户名冲突
+// TestRegister 校验注册：验证码前置、参数校验、邮箱冲突、xid 生成
 func TestRegister(t *testing.T) {
-	h, _ := newTestHandler(t)
+	h, _, mr := newTestHandler(t)
 	ctx := context.Background()
 
-	// 正常注册：不返回 token，昵称默认等于用户名
-	resp, err := h.Register(ctx, &userv1.RegisterRequest{Username: "alice_01", Password: "password123"})
+	// 无验证码：先验码的防枚举设计（探测者拿不到码无法触达唯一性判断）
+	_, err := h.Register(ctx, &userv1.RegisterRequest{Email: "alice@example.com", Password: "password123"})
+	assertCode(t, err, codes.Unauthenticated, "缺验证码")
+
+	// 错误验证码
+	_, err = h.Register(ctx, &userv1.RegisterRequest{Email: "alice@example.com", Code: "000000", Password: "password123"})
+	assertCode(t, err, codes.Unauthenticated, "坏验证码")
+
+	// 正常注册：不返回 token，xid 为对外标识
+	code := mustIssueCode(t, h, mr, auth.SceneRegister, "alice@example.com")
+	resp, err := h.Register(ctx, &userv1.RegisterRequest{Email: "alice@example.com", Code: code, Password: "password123", Username: "alice"})
 	if err != nil {
 		t.Fatalf("Register() 错误: %v", err)
 	}
-	if resp.User == nil || resp.User.Id <= 0 {
-		t.Fatalf("应返回新用户: %+v", resp.User)
+	if resp.User == nil {
+		t.Fatal("应返回新用户")
 	}
-	if resp.User.Username != "alice_01" || resp.User.Nickname != "alice_01" {
-		t.Errorf("username/nickname = %q/%q", resp.User.Username, resp.User.Nickname)
+	if !eid.Match(resp.User.Xid, eid.User) {
+		t.Errorf("xid = %q，期望 usr_ 前缀业务主键", resp.User.Xid)
+	}
+	if resp.User.Email != "alice@example.com" || resp.User.Username != "alice" {
+		t.Errorf("email/username = %q/%q", resp.User.Email, resp.User.Username)
 	}
 	if resp.User.Status != 1 {
 		t.Errorf("status = %d，期望 1", resp.User.Status)
@@ -125,48 +157,58 @@ func TestRegister(t *testing.T) {
 		t.Errorf("createdAtUnix/updatedAtUnix = %d/%d，期望 > 0", resp.User.CreatedAtUnix, resp.User.UpdatedAtUnix)
 	}
 
-	// 用户名冲突
-	_, err = h.Register(ctx, &userv1.RegisterRequest{Username: "alice_01", Password: "password123"})
-	assertCode(t, err, codes.AlreadyExists, "重复用户名")
+	// 邮箱冲突（持有效码才触达此分支）
+	code = mustIssueCode(t, h, mr, auth.SceneRegister, "alice@example.com")
+	_, err = h.Register(ctx, &userv1.RegisterRequest{Email: "alice@example.com", Code: code, Password: "password123"})
+	assertCode(t, err, codes.AlreadyExists, "重复邮箱")
 
-	// 用户名不合法：过短、含非法字符
-	for _, name := range []string{"ab", "bad name!"} {
-		_, err := h.Register(ctx, &userv1.RegisterRequest{Username: name, Password: "password123"})
-		assertCode(t, err, codes.InvalidArgument, "非法用户名 "+name)
+	// 展示名可空
+	code = mustIssueCode(t, h, mr, auth.SceneRegister, "noname@example.com")
+	if _, err := h.Register(ctx, &userv1.RegisterRequest{Email: "noname@example.com", Code: code, Password: "password123"}); err != nil {
+		t.Fatalf("展示名可空应注册成功: %v", err)
 	}
-	// 恰好 32 位应合法，33 位应拒绝
-	if _, err := h.Register(ctx, &userv1.RegisterRequest{Username: "aaaaaaaaaa_bbbbccccddddeeeeffffg", Password: "password123"}); err != nil {
-		t.Fatalf("32 位用户名应合法: %v", err)
+
+	// 展示名过长：65 字符拒绝、64 字符合法
+	long65 := strings.Repeat("名", 65)
+	code = mustIssueCode(t, h, mr, auth.SceneRegister, "long65@example.com")
+	_, err = h.Register(ctx, &userv1.RegisterRequest{Email: "long65@example.com", Code: code, Password: "password123", Username: long65})
+	assertCode(t, err, codes.InvalidArgument, "展示名 65 字符")
+	code = mustIssueCode(t, h, mr, auth.SceneRegister, "long64@example.com")
+	if _, err := h.Register(ctx, &userv1.RegisterRequest{Email: "long64@example.com", Code: code, Password: "password123", Username: strings.Repeat("名", 64)}); err != nil {
+		t.Fatalf("展示名 64 字符应合法: %v", err)
 	}
-	if _, err := h.Register(ctx, &userv1.RegisterRequest{Username: "aaaaaaaaaa_bbbbccccddddeeeeffffgg", Password: "password123"}); err == nil {
-		t.Fatal("33 位用户名应被拒绝")
+
+	// 邮箱不合法
+	for _, mail := range []string{"", "bad-email", "a@b"} {
+		_, err := h.Register(ctx, &userv1.RegisterRequest{Email: mail, Code: "123456", Password: "password123"})
+		assertCode(t, err, codes.InvalidArgument, "非法邮箱 "+mail)
 	}
 
 	// 密码不合法：过短、过长（按字符数 8-64）
 	for _, pw := range []string{"short1", strings.Repeat("a", 65)} {
-		_, err := h.Register(ctx, &userv1.RegisterRequest{Username: "weird_user", Password: pw})
+		_, err := h.Register(ctx, &userv1.RegisterRequest{Email: "weird@example.com", Code: "123456", Password: pw})
 		assertCode(t, err, codes.InvalidArgument, "非法密码")
 	}
 }
 
 // TestLogin 校验登录：成功签发双 token、凭证错误统一 Unauthenticated、禁用拒绝
 func TestLogin(t *testing.T) {
-	h, db := newTestHandler(t)
+	h, db, mr := newTestHandler(t)
 	ctx := context.Background()
-	mustRegister(t, h, "bob", "password123")
+	mustRegister(t, h, mr, "bob@example.com", "bob", "password123")
 
-	// 用户不存在与密码错误统一 Unauthenticated（防用户名枚举）
-	_, err := h.Login(ctx, &userv1.LoginRequest{Username: "ghost", Password: "password123"})
+	// 邮箱不存在与密码错误统一 Unauthenticated（防账号枚举）
+	_, err := h.Login(ctx, &userv1.LoginRequest{Email: "ghost@example.com", Password: "password123"})
 	assertCode(t, err, codes.Unauthenticated, "不存在的用户")
-	_, err = h.Login(ctx, &userv1.LoginRequest{Username: "bob", Password: "wrong-pass-1"})
+	_, err = h.Login(ctx, &userv1.LoginRequest{Email: "bob@example.com", Password: "wrong-pass-1"})
 	assertCode(t, err, codes.Unauthenticated, "密码错误")
 
 	// 空参数
-	_, err = h.Login(ctx, &userv1.LoginRequest{Username: "", Password: ""})
+	_, err = h.Login(ctx, &userv1.LoginRequest{Email: "", Password: ""})
 	assertCode(t, err, codes.InvalidArgument, "空参数")
 
 	// 正常登录：返回双 token 与有效期
-	resp := mustLogin(t, h, "bob", "password123")
+	resp := mustLogin(t, h, "bob@example.com", "password123")
 	if resp.AccessToken == "" || resp.RefreshToken == "" {
 		t.Fatal("登录应返回 access 与 refresh token")
 	}
@@ -174,7 +216,7 @@ func TestLogin(t *testing.T) {
 		t.Errorf("expires_in = %d/%d，期望 %d/%d",
 			resp.AccessExpiresIn, resp.RefreshExpiresIn, int64(testAccessTTL.Seconds()), int64(testRefreshTTL.Seconds()))
 	}
-	// access token 可用共享密钥验签（Gateway 契约）
+	// access token 可用共享密钥验签（Gateway 契约），sub 为用户 xid 全串
 	parsed, err := jwt.Parse(resp.AccessToken, func(t *jwt.Token) (any, error) {
 		return []byte(testJWTSecret), nil
 	}, jwt.WithValidMethods([]string{"HS256"}))
@@ -182,33 +224,33 @@ func TestLogin(t *testing.T) {
 		t.Fatalf("access token 验签失败: %v", err)
 	}
 	claims := parsed.Claims.(jwt.MapClaims)
-	if sub, _ := claims.GetSubject(); sub != strconv.FormatInt(resp.User.Id, 10) {
-		t.Errorf("sub = %q，期望 %q", sub, strconv.FormatInt(resp.User.Id, 10))
+	if sub, _ := claims.GetSubject(); sub != resp.User.Xid {
+		t.Errorf("sub = %q，期望 %q", sub, resp.User.Xid)
 	}
 	if claims["username"] != "bob" {
 		t.Errorf("username 声明 = %v，期望 bob", claims["username"])
 	}
 	// refresh 只存哈希：库中查不到明文
 	var count int64
-	db.Model(&dbmodel.RefreshToken{}).Where("token_hash = ?", auth.HashRefreshToken(resp.RefreshToken)).Count(&count)
+	db.Model(&dbmodel.Session{}).Where("token_hash = ?", auth.HashRefreshToken(resp.RefreshToken)).Count(&count)
 	if count != 1 {
 		t.Errorf("库中应存 refresh 哈希 1 条，实际 %d", count)
 	}
 
 	// 禁用后登录拒绝
-	if err := db.Exec("UPDATE users SET status = 0 WHERE username = ?", "bob").Error; err != nil {
+	if err := db.Exec("UPDATE users SET status = 0 WHERE email = ?", "bob@example.com").Error; err != nil {
 		t.Fatalf("禁用用户失败: %v", err)
 	}
-	_, err = h.Login(ctx, &userv1.LoginRequest{Username: "bob", Password: "password123"})
+	_, err = h.Login(ctx, &userv1.LoginRequest{Email: "bob@example.com", Password: "password123"})
 	assertCode(t, err, codes.FailedPrecondition, "禁用用户登录")
 }
 
-// TestRefresh 校验刷新：轮换、重用检测吊销全部、过期拒绝
+// TestRefresh 校验刷新：原地轮换、旧 token 复用按无效拒绝、过期拒绝
 func TestRefresh(t *testing.T) {
-	h, _ := newTestHandler(t)
+	h, _, mr := newTestHandler(t)
 	ctx := context.Background()
-	userID := mustRegister(t, h, "carol", "password123")
-	login := mustLogin(t, h, "carol", "password123")
+	mustRegister(t, h, mr, "carol@example.com", "carol", "password123")
+	login := mustLogin(t, h, "carol@example.com", "password123")
 
 	// 正常轮换：返回新对，且与旧对不同
 	resp1, err := h.Refresh(ctx, &userv1.RefreshRequest{RefreshToken: login.RefreshToken})
@@ -220,13 +262,14 @@ func TestRefresh(t *testing.T) {
 	}
 	// 注：access token 载荷时间精确到秒，同秒内两次签发的 JWT 字符串相同属正常
 
-	// 重用旧 refresh（已作废）：Unauthenticated，且触发吊销该用户全部
+	// 旧 refresh 复用（原地轮换后哈希不命中）：按无效拒绝，不做重用检测
 	_, err = h.Refresh(ctx, &userv1.RefreshRequest{RefreshToken: login.RefreshToken})
-	assertCode(t, err, codes.Unauthenticated, "重用已作废 token")
+	assertCode(t, err, codes.Unauthenticated, "重用旧 token")
 
-	// 全部吊销验证：刚轮换出的新 token 也不可用
-	_, err = h.Refresh(ctx, &userv1.RefreshRequest{RefreshToken: resp1.RefreshToken})
-	assertCode(t, err, codes.Unauthenticated, "吊销后的新 token")
+	// 轮换出的新 token 不受影响（区别于旧「吊销全部」语义）
+	if _, err := h.Refresh(ctx, &userv1.RefreshRequest{RefreshToken: resp1.RefreshToken}); err != nil {
+		t.Errorf("轮换后的新 token 应可用: %v", err)
+	}
 
 	// 伪造 token
 	_, err = h.Refresh(ctx, &userv1.RefreshRequest{RefreshToken: "forged-token"})
@@ -236,31 +279,36 @@ func TestRefresh(t *testing.T) {
 	_, err = h.Refresh(ctx, &userv1.RefreshRequest{RefreshToken: ""})
 	assertCode(t, err, codes.InvalidArgument, "空 token")
 
-	// 自然过期：写入已过期记录（绕过轮换），刷新拒绝
-	if err := h.st.CreateRefreshToken(ctx, userID, auth.HashRefreshToken("expired-rt"), time.Now().Add(-time.Minute)); err != nil {
-		t.Fatalf("写入过期 token 失败: %v", err)
+	// 自然过期：写入已过期会话（绕过轮换），刷新拒绝
+	if err := h.st.CreateSession(ctx, 1, eid.New(eid.Device), "",
+		auth.HashRefreshToken("expired-rt"), time.Now().Add(-time.Minute)); err != nil {
+		t.Fatalf("写入过期会话失败: %v", err)
 	}
 	_, err = h.Refresh(ctx, &userv1.RefreshRequest{RefreshToken: "expired-rt"})
 	assertCode(t, err, codes.Unauthenticated, "过期 token")
 }
 
-// TestGetUser 校验查询用户：参数、不存在、正常返回
+// TestGetUser 校验查询用户：xid 校验、不存在、正常返回
 func TestGetUser(t *testing.T) {
-	h, _ := newTestHandler(t)
+	h, _, mr := newTestHandler(t)
 	ctx := context.Background()
-	id := mustRegister(t, h, "dave", "password123")
+	u := mustRegister(t, h, mr, "dave@example.com", "dave", "password123")
 
-	_, err := h.GetUser(ctx, &userv1.GetUserRequest{Id: 0})
-	assertCode(t, err, codes.InvalidArgument, "缺少 ID")
+	// xid 缺失 / 非法 / 跨实体串用
+	for _, x := range []string{"", "not-a-xid", eid.New(eid.Session)} {
+		_, err := h.GetUser(ctx, &userv1.GetUserRequest{Xid: x})
+		assertCode(t, err, codes.InvalidArgument, "非法 xid "+x)
+	}
 
-	_, err = h.GetUser(ctx, &userv1.GetUserRequest{Id: 99999})
+	// 合法但不存在
+	_, err := h.GetUser(ctx, &userv1.GetUserRequest{Xid: eid.New(eid.User)})
 	assertCode(t, err, codes.NotFound, "不存在的用户")
 
-	resp, err := h.GetUser(ctx, &userv1.GetUserRequest{Id: id})
+	resp, err := h.GetUser(ctx, &userv1.GetUserRequest{Xid: u.Xid})
 	if err != nil {
 		t.Fatalf("GetUser() 错误: %v", err)
 	}
-	if resp.User.Username != "dave" || resp.User.Id != id {
+	if resp.User.Email != "dave@example.com" || resp.User.Xid != u.Xid {
 		t.Errorf("返回用户 = %+v", resp.User)
 	}
 	if resp.User.CreatedAtUnix <= 0 || resp.User.UpdatedAtUnix <= 0 {
@@ -268,48 +316,48 @@ func TestGetUser(t *testing.T) {
 	}
 }
 
-// TestUpdatePassword 校验改密：参数、旧密码错误、成功后旧 token 失效且旧密码作废
+// TestUpdatePassword 校验改密：参数、旧密码错误、成功后会话全删且旧密码作废
 func TestUpdatePassword(t *testing.T) {
-	h, _ := newTestHandler(t)
+	h, _, mr := newTestHandler(t)
 	ctx := context.Background()
-	id := mustRegister(t, h, "erin", "old-pass-123")
-	login := mustLogin(t, h, "erin", "old-pass-123")
+	u := mustRegister(t, h, mr, "erin@example.com", "erin", "old-pass-123")
+	login := mustLogin(t, h, "erin@example.com", "old-pass-123")
 
-	// user_id 缺失 / 新密码不合法
-	_, err := h.UpdatePassword(ctx, &userv1.UpdatePasswordRequest{UserId: 0, OldPassword: "old-pass-123", NewPassword: "new-pass-123"})
-	assertCode(t, err, codes.InvalidArgument, "缺少 user_id")
-	_, err = h.UpdatePassword(ctx, &userv1.UpdatePasswordRequest{UserId: id, OldPassword: "old-pass-123", NewPassword: "short"})
+	// xid 缺失 / 新密码不合法
+	_, err := h.UpdatePassword(ctx, &userv1.UpdatePasswordRequest{UserXid: "", OldPassword: "old-pass-123", NewPassword: "new-pass-123"})
+	assertCode(t, err, codes.InvalidArgument, "缺少 user_xid")
+	_, err = h.UpdatePassword(ctx, &userv1.UpdatePasswordRequest{UserXid: u.Xid, OldPassword: "old-pass-123", NewPassword: "short"})
 	assertCode(t, err, codes.InvalidArgument, "新密码过短")
 
-	// 用户不存在（user_id 来自 token，失效说明凭证陈旧）
-	_, err = h.UpdatePassword(ctx, &userv1.UpdatePasswordRequest{UserId: 99999, OldPassword: "old-pass-123", NewPassword: "new-pass-123"})
+	// 用户不存在（user_xid 来自 token，失效说明凭证陈旧）
+	_, err = h.UpdatePassword(ctx, &userv1.UpdatePasswordRequest{UserXid: eid.New(eid.User), OldPassword: "old-pass-123", NewPassword: "new-pass-123"})
 	assertCode(t, err, codes.Unauthenticated, "用户不存在")
 
 	// 旧密码错误
-	_, err = h.UpdatePassword(ctx, &userv1.UpdatePasswordRequest{UserId: id, OldPassword: "wrong-pass-1", NewPassword: "new-pass-123"})
+	_, err = h.UpdatePassword(ctx, &userv1.UpdatePasswordRequest{UserXid: u.Xid, OldPassword: "wrong-pass-1", NewPassword: "new-pass-123"})
 	assertCode(t, err, codes.Unauthenticated, "旧密码错误")
 
 	// 成功改密
-	_, err = h.UpdatePassword(ctx, &userv1.UpdatePasswordRequest{UserId: id, OldPassword: "old-pass-123", NewPassword: "new-pass-123"})
+	_, err = h.UpdatePassword(ctx, &userv1.UpdatePasswordRequest{UserXid: u.Xid, OldPassword: "old-pass-123", NewPassword: "new-pass-123"})
 	if err != nil {
 		t.Fatalf("UpdatePassword() 错误: %v", err)
 	}
 
-	// 改密后：全部 refresh 失效
+	// 改密后：全部会话删除
 	_, err = h.Refresh(ctx, &userv1.RefreshRequest{RefreshToken: login.RefreshToken})
 	assertCode(t, err, codes.Unauthenticated, "改密后的旧 refresh")
 
 	// 旧密码不可登录，新密码可登录
-	_, err = h.Login(ctx, &userv1.LoginRequest{Username: "erin", Password: "old-pass-123"})
+	_, err = h.Login(ctx, &userv1.LoginRequest{Email: "erin@example.com", Password: "old-pass-123"})
 	assertCode(t, err, codes.Unauthenticated, "旧密码登录")
-	if resp := mustLogin(t, h, "erin", "new-pass-123"); resp.User.Id != id {
+	if resp := mustLogin(t, h, "erin@example.com", "new-pass-123"); resp.User.Xid != u.Xid {
 		t.Errorf("新密码登录返回用户 = %+v", resp.User)
 	}
 }
 
 // TestSendEmailCode 校验发码：参数校验、正常空响应（防枚举）、60s 限频
 func TestSendEmailCode(t *testing.T) {
-	h, _ := newTestHandler(t)
+	h, _, _ := newTestHandler(t)
 	ctx := t.Context()
 
 	// 邮箱 / 场景不合法

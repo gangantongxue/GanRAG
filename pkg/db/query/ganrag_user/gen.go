@@ -16,34 +16,34 @@ import (
 )
 
 var (
-	Q            = new(Query)
-	RefreshToken *refreshToken
-	User         *user
-	UserFollow   *userFollow
+	Q          = new(Query)
+	Session    *session
+	User       *user
+	UserFollow *userFollow
 )
 
 func SetDefault(db *gorm.DB, opts ...gen.DOOption) {
 	*Q = *Use(db, opts...)
-	RefreshToken = &Q.RefreshToken
+	Session = &Q.Session
 	User = &Q.User
 	UserFollow = &Q.UserFollow
 }
 
 func Use(db *gorm.DB, opts ...gen.DOOption) *Query {
 	return &Query{
-		db:           db,
-		RefreshToken: newRefreshToken(db, opts...),
-		User:         newUser(db, opts...),
-		UserFollow:   newUserFollow(db, opts...),
+		db:         db,
+		Session:    newSession(db, opts...),
+		User:       newUser(db, opts...),
+		UserFollow: newUserFollow(db, opts...),
 	}
 }
 
 type Query struct {
 	db *gorm.DB
 
-	RefreshToken refreshToken
-	User         user
-	UserFollow   userFollow
+	Session    session
+	User       user
+	UserFollow userFollow
 }
 
 func (q *Query) Available() bool { return q.db != nil }
@@ -52,10 +52,10 @@ func (q *Query) UnderlyingDB() *gorm.DB { return q.db }
 
 func (q *Query) clone(db *gorm.DB) *Query {
 	return &Query{
-		db:           db,
-		RefreshToken: q.RefreshToken.clone(db),
-		User:         q.User.clone(db),
-		UserFollow:   q.UserFollow.clone(db),
+		db:         db,
+		Session:    q.Session.clone(db),
+		User:       q.User.clone(db),
+		UserFollow: q.UserFollow.clone(db),
 	}
 }
 
@@ -69,24 +69,24 @@ func (q *Query) WriteDB() *Query {
 
 func (q *Query) ReplaceDB(db *gorm.DB) *Query {
 	return &Query{
-		db:           db,
-		RefreshToken: q.RefreshToken.replaceDB(db),
-		User:         q.User.replaceDB(db),
-		UserFollow:   q.UserFollow.replaceDB(db),
+		db:         db,
+		Session:    q.Session.replaceDB(db),
+		User:       q.User.replaceDB(db),
+		UserFollow: q.UserFollow.replaceDB(db),
 	}
 }
 
 type queryCtx struct {
-	RefreshToken *refreshTokenDo
-	User         *userDo
-	UserFollow   *userFollowDo
+	Session    *sessionDo
+	User       *userDo
+	UserFollow *userFollowDo
 }
 
 func (q *Query) WithContext(ctx context.Context) *queryCtx {
 	return &queryCtx{
-		RefreshToken: q.RefreshToken.WithContext(ctx),
-		User:         q.User.WithContext(ctx),
-		UserFollow:   q.UserFollow.WithContext(ctx),
+		Session:    q.Session.WithContext(ctx),
+		User:       q.User.WithContext(ctx),
+		UserFollow: q.UserFollow.WithContext(ctx),
 	}
 }
 

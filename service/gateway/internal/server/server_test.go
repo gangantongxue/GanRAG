@@ -5,7 +5,6 @@ import (
 	"io"
 	"log/slog"
 	"net"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -20,6 +19,7 @@ import (
 	"google.golang.org/grpc/test/bufconn"
 
 	userv1 "github.com/gangantongxue/GanRAG/api/gen/user/v1"
+	"github.com/gangantongxue/GanRAG/pkg/eid"
 	"github.com/gangantongxue/GanRAG/service/gateway/internal/config"
 )
 
@@ -35,7 +35,7 @@ type fakeUserServer struct {
 	registerErr error                   // Register 返回的错误（nil 表示成功）
 	getUserErr  error                   // GetUser 返回的错误
 	gotRegister *userv1.RegisterRequest // 收到的 Register 请求
-	gotGetUser  *userv1.GetUserRequest  // 收到的 GetUser 请求（断言 user_id 注入）
+	gotGetUser  *userv1.GetUserRequest  // 收到的 GetUser 请求（断言用户 xid 注入）
 	gotUpdate   *userv1.UpdatePasswordRequest
 }
 
@@ -44,12 +44,12 @@ func (f *fakeUserServer) Register(ctx context.Context, req *userv1.RegisterReque
 	if f.registerErr != nil {
 		return nil, f.registerErr
 	}
-	return &userv1.RegisterResponse{User: &userv1.User{Id: 1, Username: req.Username}}, nil
+	return &userv1.RegisterResponse{User: &userv1.User{Xid: "usr_fake", Email: req.Email, Username: req.Username}}, nil
 }
 
 func (f *fakeUserServer) Login(ctx context.Context, req *userv1.LoginRequest) (*userv1.LoginResponse, error) {
 	return &userv1.LoginResponse{
-		User:            &userv1.User{Id: 1, Username: req.Username},
+		User:            &userv1.User{Xid: "usr_fake", Email: req.Email},
 		AccessToken:     "access",
 		RefreshToken:    "refresh",
 		AccessExpiresIn: 900,
@@ -65,7 +65,7 @@ func (f *fakeUserServer) GetUser(ctx context.Context, req *userv1.GetUserRequest
 	if f.getUserErr != nil {
 		return nil, f.getUserErr
 	}
-	return &userv1.GetUserResponse{User: &userv1.User{Id: req.Id, Username: "alice"}}, nil
+	return &userv1.GetUserResponse{User: &userv1.User{Xid: req.Xid, Email: "alice@example.com"}}, nil
 }
 
 func (f *fakeUserServer) UpdatePassword(ctx context.Context, req *userv1.UpdatePasswordRequest) (*userv1.UpdatePasswordResponse, error) {
@@ -117,12 +117,12 @@ func newTestGateway(t *testing.T, fake *fakeUserServer) (*route.Engine, *fakeUse
 	return New(cfg, conn, log).h.Engine, fake
 }
 
-// issueToken 按 user 服务的签发约定构造 access token
-func issueToken(t *testing.T, userID int64) string {
+// issueToken 按 user 服务的签发约定构造 access token（sub 为用户 xid 全串）
+func issueToken(t *testing.T, userXID string) string {
 	t.Helper()
 	now := time.Now()
 	claims := jwt.RegisteredClaims{
-		Subject:   strconv.FormatInt(userID, 10),
+		Subject:   userXID,
 		Issuer:    testIssuer,
 		IssuedAt:  jwt.NewNumericDate(now),
 		ExpiresAt: jwt.NewNumericDate(now.Add(15 * time.Minute)),
@@ -143,16 +143,16 @@ func jsonBody(s string) *ut.Body {
 func TestRegister_Success(t *testing.T) {
 	engine, fake := newTestGateway(t, &fakeUserServer{})
 	w := ut.PerformRequest(engine, "POST", "/api/v1/auth/register",
-		jsonBody(`{"username":"alice","password":"password123"}`),
+		jsonBody(`{"email":"alice@example.com","code":"123456","password":"password123","username":"alice"}`),
 		ut.Header{Key: "Content-Type", Value: "application/json"})
 
 	if w.Code != 200 {
 		t.Fatalf("状态码 = %d，期望 200（body: %s）", w.Code, w.Body.String())
 	}
-	if !strings.Contains(w.Body.String(), `"username":"alice"`) {
-		t.Errorf("响应体应包含用户名: %s", w.Body.String())
+	if !strings.Contains(w.Body.String(), `"email":"alice@example.com"`) {
+		t.Errorf("响应体应包含邮箱: %s", w.Body.String())
 	}
-	if fake.gotRegister == nil || fake.gotRegister.Username != "alice" {
+	if fake.gotRegister == nil || fake.gotRegister.Email != "alice@example.com" || fake.gotRegister.Code != "123456" {
 		t.Errorf("下游未收到正确的注册请求: %+v", fake.gotRegister)
 	}
 }
@@ -160,17 +160,17 @@ func TestRegister_Success(t *testing.T) {
 // TestRegister_已存在映射409 验证 gRPC AlreadyExists → HTTP 409 统一错误体
 func TestRegister_已存在映射409(t *testing.T) {
 	engine, _ := newTestGateway(t, &fakeUserServer{
-		registerErr: status.Error(codes.AlreadyExists, "用户名已存在"),
+		registerErr: status.Error(codes.AlreadyExists, "邮箱已注册"),
 	})
 	w := ut.PerformRequest(engine, "POST", "/api/v1/auth/register",
-		jsonBody(`{"username":"alice","password":"password123"}`),
+		jsonBody(`{"email":"alice@example.com","code":"123456","password":"password123"}`),
 		ut.Header{Key: "Content-Type", Value: "application/json"})
 
 	if w.Code != 409 {
 		t.Fatalf("状态码 = %d，期望 409", w.Code)
 	}
 	body := w.Body.String()
-	if !strings.Contains(body, `"code":409`) || !strings.Contains(body, "用户名已存在") {
+	if !strings.Contains(body, `"code":409`) || !strings.Contains(body, "邮箱已注册") {
 		t.Errorf("错误体不合规: %s", body)
 	}
 }
@@ -216,17 +216,18 @@ func TestMe_未认证返回401(t *testing.T) {
 	}
 }
 
-// TestMe_注入Token中的用户ID 验证 user_id 取自验签结果而非请求参数
-func TestMe_注入Token中的用户ID(t *testing.T) {
+// TestMe_注入Token中的用户xid 验证用户 xid 取自验签结果而非请求参数
+func TestMe_注入Token中的用户xid(t *testing.T) {
+	userXID := eid.New(eid.User)
 	engine, fake := newTestGateway(t, &fakeUserServer{})
 	w := ut.PerformRequest(engine, "GET", "/api/v1/users/me", nil,
-		ut.Header{Key: "Authorization", Value: "Bearer " + issueToken(t, 42)})
+		ut.Header{Key: "Authorization", Value: "Bearer " + issueToken(t, userXID)})
 
 	if w.Code != 200 {
 		t.Fatalf("状态码 = %d，期望 200（body: %s）", w.Code, w.Body.String())
 	}
-	if fake.gotGetUser == nil || fake.gotGetUser.Id != 42 {
-		t.Errorf("下游收到的 user id = %+v，期望 42", fake.gotGetUser)
+	if fake.gotGetUser == nil || fake.gotGetUser.Xid != userXID {
+		t.Errorf("下游收到的用户 xid = %+v，期望 %s", fake.gotGetUser, userXID)
 	}
 }
 
@@ -236,26 +237,27 @@ func TestMe_下游404映射(t *testing.T) {
 		getUserErr: status.Error(codes.NotFound, "用户不存在"),
 	})
 	w := ut.PerformRequest(engine, "GET", "/api/v1/users/me", nil,
-		ut.Header{Key: "Authorization", Value: "Bearer " + issueToken(t, 42)})
+		ut.Header{Key: "Authorization", Value: "Bearer " + issueToken(t, eid.New(eid.User))})
 
 	if w.Code != 404 {
 		t.Errorf("状态码 = %d，期望 404", w.Code)
 	}
 }
 
-// TestUpdatePassword_注入用户ID 验证改密时 user_id 由 token 注入、不信任请求体
-func TestUpdatePassword_注入用户ID(t *testing.T) {
+// TestUpdatePassword_注入用户xid 验证改密时用户 xid 由 token 注入、不信任请求体
+func TestUpdatePassword_注入用户xid(t *testing.T) {
+	userXID := eid.New(eid.User)
 	engine, fake := newTestGateway(t, &fakeUserServer{})
 	w := ut.PerformRequest(engine, "PUT", "/api/v1/users/me/password",
 		jsonBody(`{"old_password":"old-pass-1","new_password":"new-pass-1"}`),
-		ut.Header{Key: "Authorization", Value: "Bearer " + issueToken(t, 42)},
+		ut.Header{Key: "Authorization", Value: "Bearer " + issueToken(t, userXID)},
 		ut.Header{Key: "Content-Type", Value: "application/json"})
 
 	if w.Code != 200 {
 		t.Fatalf("状态码 = %d，期望 200（body: %s）", w.Code, w.Body.String())
 	}
-	if fake.gotUpdate == nil || fake.gotUpdate.UserId != 42 {
-		t.Errorf("下游收到的 user_id = %+v，期望 42", fake.gotUpdate)
+	if fake.gotUpdate == nil || fake.gotUpdate.UserXid != userXID {
+		t.Errorf("下游收到的用户 xid = %+v，期望 %s", fake.gotUpdate, userXID)
 	}
 	if fake.gotUpdate.GetOldPassword() != "old-pass-1" {
 		t.Errorf("下游收到的旧密码 = %q，期望 old-pass-1", fake.gotUpdate.GetOldPassword())

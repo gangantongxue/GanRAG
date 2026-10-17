@@ -4,10 +4,10 @@ import (
 	"context"
 	"net"
 	"slices"
-	"strconv"
 	"sync"
 	"testing"
 
+	"github.com/alicebob/miniredis/v2"
 	"github.com/golang-jwt/jwt/v5"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -21,6 +21,8 @@ import (
 	"gorm.io/gorm"
 
 	userv1 "github.com/gangantongxue/GanRAG/api/gen/user/v1"
+	"github.com/gangantongxue/GanRAG/pkg/eid"
+	"github.com/gangantongxue/GanRAG/service/user/internal/auth"
 )
 
 // newE2EClient 通过 bufconn 启动完整 gRPC 服务端并返回客户端连接与底层数据库连接
@@ -37,9 +39,10 @@ import (
 //   - healthv1.HealthClient: 健康检查客户端
 //   - *grpc.ClientConn: 底层连接（反射测试用）
 //   - *gorm.DB: 底层数据库连接（禁用用户等直接改数据用）
-func newE2EClient(t *testing.T) (userv1.UserServiceClient, healthv1.HealthClient, *grpc.ClientConn, *gorm.DB) {
+//   - *Handler: 服务端 handler（测试取邮箱验证码用，邮件通道不进 SMTP）
+func newE2EClient(t *testing.T) (userv1.UserServiceClient, healthv1.HealthClient, *grpc.ClientConn, *gorm.DB, *Handler, *miniredis.Miniredis) {
 	t.Helper()
-	h, db := newTestHandler(t)
+	h, db, mr := newTestHandler(t)
 
 	lis := bufconn.Listen(1024 * 1024)
 	grpcServer := grpc.NewServer()
@@ -72,56 +75,71 @@ func newE2EClient(t *testing.T) (userv1.UserServiceClient, healthv1.HealthClient
 		_ = lis.Close()
 	})
 
-	return userv1.NewUserServiceClient(conn), healthv1.NewHealthClient(conn), conn, db
+	return userv1.NewUserServiceClient(conn), healthv1.NewHealthClient(conn), conn, db, h, mr
+}
+
+// e2eRegister 走完整 RPC 注册（先经 handler 取邮箱验证码）
+func e2eRegister(t *testing.T, client userv1.UserServiceClient, h *Handler, mr *miniredis.Miniredis, email, password string) *userv1.User {
+	t.Helper()
+	code := mustIssueCode(t, h, mr, auth.SceneRegister, email)
+	resp, err := client.Register(t.Context(), &userv1.RegisterRequest{
+		Email: email, Code: code, Password: password,
+	})
+	if err != nil {
+		t.Fatalf("Register(%s) 错误: %v", email, err)
+	}
+	return resp.User
 }
 
 // TestUserServiceEndToEnd 全接口端到端测试（走完整 gRPC 协议）
 //
 // 覆盖 5 个 RPC 的成功链路与契约错误码：
-// 注册 -> 参数/重名校验 -> 登录（防用户名枚举）-> 查询用户 ->
-// 刷新轮换与重用检测 -> 改密（吊销全部 refresh、旧密码作废）-> 禁用拒绝。
+// 注册（邮箱+验证码）-> 参数/邮箱查重 -> 登录（防账号枚举）-> 查询用户 ->
+// 刷新轮换（旧 token 复用按无效拒绝）-> 改密（会话全删、旧密码作废）-> 禁用拒绝。
 func TestUserServiceEndToEnd(t *testing.T) {
-	client, _, _, db := newE2EClient(t)
+	client, _, _, db, h, mr := newE2EClient(t)
 	ctx := t.Context()
 
 	// ---- Register ----
-	// 正常注册：昵称默认等于用户名，状态正常，时间戳非零
-	reg, err := client.Register(ctx, &userv1.RegisterRequest{Username: "lifecycle_user", Password: "password123"})
-	if err != nil {
-		t.Fatalf("Register() 错误: %v", err)
+	// 正常注册：xid 对外、状态正常、时间戳非零
+	reg := e2eRegister(t, client, h, mr, "lifecycle@example.com", "password123")
+	xid := reg.Xid
+	if !eid.Match(xid, eid.User) || reg.Email != "lifecycle@example.com" {
+		t.Fatalf("注册返回用户不符: %+v", reg)
 	}
-	uid := reg.User.Id
-	if uid <= 0 || reg.User.Username != "lifecycle_user" || reg.User.Nickname != "lifecycle_user" {
-		t.Fatalf("注册返回用户不符: %+v", reg.User)
-	}
-	if reg.User.Status != 1 || reg.User.CreatedAtUnix <= 0 || reg.User.UpdatedAtUnix <= 0 {
-		t.Errorf("status/时间戳不符: %+v", reg.User)
+	if reg.Status != 1 || reg.CreatedAtUnix <= 0 || reg.UpdatedAtUnix <= 0 {
+		t.Errorf("status/时间戳不符: %+v", reg)
 	}
 
-	// 重名与非法参数（错误码需穿过 protobuf status 序列化保持不变）
-	_, err = client.Register(ctx, &userv1.RegisterRequest{Username: "lifecycle_user", Password: "password123"})
-	assertCode(t, err, codes.AlreadyExists, "e2e 重复用户名")
+	// 缺验证码先被拒（防枚举：未持码无法触达邮箱查重）
+	_, err := client.Register(ctx, &userv1.RegisterRequest{Email: "lifecycle@example.com", Password: "password123"})
+	assertCode(t, err, codes.Unauthenticated, "e2e 缺验证码")
+
+	// 邮箱查重与非法参数（错误码需穿过 protobuf status 序列化保持不变）
+	code := mustIssueCode(t, h, mr, auth.SceneRegister, "lifecycle@example.com")
+	_, err = client.Register(ctx, &userv1.RegisterRequest{Email: "lifecycle@example.com", Code: code, Password: "password123"})
+	assertCode(t, err, codes.AlreadyExists, "e2e 重复邮箱")
 	for _, r := range []*userv1.RegisterRequest{
-		{Username: "x!", Password: "password123"}, // 非法字符
-		{Username: "ok_name", Password: "short1"}, // 密码过短
+		{Email: "bad-email", Code: "123456", Password: "password123"}, // 非法邮箱
+		{Email: "x@example.com", Code: "123456", Password: "short1"},  // 密码过短
 	} {
 		_, err := client.Register(ctx, r)
 		assertCode(t, err, codes.InvalidArgument, "e2e 非法注册参数")
 	}
 
-	// ---- Login：防用户名枚举 ----
-	_, err = client.Login(ctx, &userv1.LoginRequest{Username: "ghost_user", Password: "password123"})
+	// ---- Login：防账号枚举 ----
+	_, err = client.Login(ctx, &userv1.LoginRequest{Email: "ghost@example.com", Password: "password123"})
 	assertCode(t, err, codes.Unauthenticated, "e2e 用户不存在")
 	ghostMsg := status.Convert(err).Message()
-	_, err = client.Login(ctx, &userv1.LoginRequest{Username: "lifecycle_user", Password: "wrong-pass-1"})
+	_, err = client.Login(ctx, &userv1.LoginRequest{Email: "lifecycle@example.com", Password: "wrong-pass-1"})
 	assertCode(t, err, codes.Unauthenticated, "e2e 密码错误")
-	// 两种失败必须返回完全相同的消息，否则泄露「用户名是否存在」
+	// 两种失败必须返回完全相同的消息，否则泄露「邮箱是否已注册」
 	if got := status.Convert(err).Message(); got != ghostMsg {
 		t.Errorf("防枚举失败：用户不存在消息 %q != 密码错误消息 %q", ghostMsg, got)
 	}
 
 	// ---- Login 成功：双 token 契约 ----
-	login, err := client.Login(ctx, &userv1.LoginRequest{Username: "lifecycle_user", Password: "password123"})
+	login, err := client.Login(ctx, &userv1.LoginRequest{Email: "lifecycle@example.com", Password: "password123"})
 	if err != nil {
 		t.Fatalf("Login() 错误: %v", err)
 	}
@@ -140,27 +158,27 @@ func TestUserServiceEndToEnd(t *testing.T) {
 		t.Fatalf("access token 验签失败: %v", err)
 	}
 	claims := parsed.Claims.(jwt.MapClaims)
-	if sub, _ := claims.GetSubject(); sub != strconv.FormatInt(uid, 10) {
-		t.Errorf("sub = %q，期望 %q", sub, strconv.FormatInt(uid, 10))
+	if sub, _ := claims.GetSubject(); sub != xid {
+		t.Errorf("sub = %q，期望 %q", sub, xid)
 	}
-	if claims["username"] != "lifecycle_user" {
-		t.Errorf("username 声明 = %v", claims["username"])
+	if claims["username"] != "" {
+		t.Errorf("username 声明 = %v，期望空展示名", claims["username"])
 	}
 
 	// ---- GetUser ----
-	got, err := client.GetUser(ctx, &userv1.GetUserRequest{Id: uid})
+	got, err := client.GetUser(ctx, &userv1.GetUserRequest{Xid: xid})
 	if err != nil {
 		t.Fatalf("GetUser() 错误: %v", err)
 	}
-	if got.User.Id != uid || got.User.Username != "lifecycle_user" {
+	if got.User.Xid != xid || got.User.Email != "lifecycle@example.com" {
 		t.Errorf("GetUser 返回 = %+v", got.User)
 	}
-	_, err = client.GetUser(ctx, &userv1.GetUserRequest{Id: 0})
-	assertCode(t, err, codes.InvalidArgument, "e2e 缺少 ID")
-	_, err = client.GetUser(ctx, &userv1.GetUserRequest{Id: 999999999})
+	_, err = client.GetUser(ctx, &userv1.GetUserRequest{Xid: ""})
+	assertCode(t, err, codes.InvalidArgument, "e2e 缺少 xid")
+	_, err = client.GetUser(ctx, &userv1.GetUserRequest{Xid: eid.New(eid.User)})
 	assertCode(t, err, codes.NotFound, "e2e 用户不存在")
 
-	// ---- Refresh：轮换 + 重用检测吊销全部 ----
+	// ---- Refresh：原地轮换，旧 token 复用按无效拒绝 ----
 	r1, err := client.Refresh(ctx, &userv1.RefreshRequest{RefreshToken: login.RefreshToken})
 	if err != nil {
 		t.Fatalf("Refresh() 错误: %v", err)
@@ -168,48 +186,49 @@ func TestUserServiceEndToEnd(t *testing.T) {
 	if r1.RefreshToken == login.RefreshToken {
 		t.Error("轮换应签发全新的 refresh token")
 	}
-	// 重用已作废 token：视为泄露，吊销该用户全部
+	// 旧 token 复用：哈希不再命中，按无效拒绝（不做重用检测）
 	_, err = client.Refresh(ctx, &userv1.RefreshRequest{RefreshToken: login.RefreshToken})
-	assertCode(t, err, codes.Unauthenticated, "e2e 重用作废 token")
-	// 刚轮换出的新 token 也应被连带吊销
-	_, err = client.Refresh(ctx, &userv1.RefreshRequest{RefreshToken: r1.RefreshToken})
-	assertCode(t, err, codes.Unauthenticated, "e2e 吊销后的 token")
+	assertCode(t, err, codes.Unauthenticated, "e2e 重用旧 token")
+	// 轮换出的新 token 不受影响
+	if _, err := client.Refresh(ctx, &userv1.RefreshRequest{RefreshToken: r1.RefreshToken}); err != nil {
+		t.Errorf("轮换后的新 token 应可用: %v", err)
+	}
 	_, err = client.Refresh(ctx, &userv1.RefreshRequest{RefreshToken: ""})
 	assertCode(t, err, codes.InvalidArgument, "e2e 空 refresh token")
 
 	// ---- UpdatePassword ----
-	login2, err := client.Login(ctx, &userv1.LoginRequest{Username: "lifecycle_user", Password: "password123"})
+	login2, err := client.Login(ctx, &userv1.LoginRequest{Email: "lifecycle@example.com", Password: "password123"})
 	if err != nil {
 		t.Fatalf("重新登录错误: %v", err)
 	}
-	_, err = client.UpdatePassword(ctx, &userv1.UpdatePasswordRequest{UserId: 0, OldPassword: "password123", NewPassword: "new-pass-456"})
-	assertCode(t, err, codes.InvalidArgument, "e2e 缺少 user_id")
-	_, err = client.UpdatePassword(ctx, &userv1.UpdatePasswordRequest{UserId: uid, OldPassword: "password123", NewPassword: "short"})
+	_, err = client.UpdatePassword(ctx, &userv1.UpdatePasswordRequest{UserXid: "", OldPassword: "password123", NewPassword: "new-pass-456"})
+	assertCode(t, err, codes.InvalidArgument, "e2e 缺少 user_xid")
+	_, err = client.UpdatePassword(ctx, &userv1.UpdatePasswordRequest{UserXid: xid, OldPassword: "password123", NewPassword: "short"})
 	assertCode(t, err, codes.InvalidArgument, "e2e 新密码过短")
-	_, err = client.UpdatePassword(ctx, &userv1.UpdatePasswordRequest{UserId: uid, OldPassword: "wrong-pass-1", NewPassword: "new-pass-456"})
+	_, err = client.UpdatePassword(ctx, &userv1.UpdatePasswordRequest{UserXid: xid, OldPassword: "wrong-pass-1", NewPassword: "new-pass-456"})
 	assertCode(t, err, codes.Unauthenticated, "e2e 旧密码错误")
 
 	if _, err := client.UpdatePassword(ctx, &userv1.UpdatePasswordRequest{
-		UserId: uid, OldPassword: "password123", NewPassword: "new-pass-456",
+		UserXid: xid, OldPassword: "password123", NewPassword: "new-pass-456",
 	}); err != nil {
 		t.Fatalf("UpdatePassword() 错误: %v", err)
 	}
-	// 改密后该用户全部 refresh 失效
+	// 改密后该用户全部会话删除
 	_, err = client.Refresh(ctx, &userv1.RefreshRequest{RefreshToken: login2.RefreshToken})
 	assertCode(t, err, codes.Unauthenticated, "e2e 改密后的旧 refresh")
 	// 旧密码作废、新密码可登录
-	_, err = client.Login(ctx, &userv1.LoginRequest{Username: "lifecycle_user", Password: "password123"})
+	_, err = client.Login(ctx, &userv1.LoginRequest{Email: "lifecycle@example.com", Password: "password123"})
 	assertCode(t, err, codes.Unauthenticated, "e2e 旧密码登录")
-	login3, err := client.Login(ctx, &userv1.LoginRequest{Username: "lifecycle_user", Password: "new-pass-456"})
+	login3, err := client.Login(ctx, &userv1.LoginRequest{Email: "lifecycle@example.com", Password: "new-pass-456"})
 	if err != nil {
 		t.Fatalf("新密码登录错误: %v", err)
 	}
 
 	// ---- 禁用账号：登录与刷新均拒绝 ----
-	if err := db.Exec("UPDATE users SET status = 0 WHERE id = ?", uid).Error; err != nil {
+	if err := db.Exec("UPDATE users SET status = 0 WHERE xid = ?", xid).Error; err != nil {
 		t.Fatalf("禁用用户失败: %v", err)
 	}
-	_, err = client.Login(ctx, &userv1.LoginRequest{Username: "lifecycle_user", Password: "new-pass-456"})
+	_, err = client.Login(ctx, &userv1.LoginRequest{Email: "lifecycle@example.com", Password: "new-pass-456"})
 	assertCode(t, err, codes.FailedPrecondition, "e2e 禁用账号登录")
 	_, err = client.Refresh(ctx, &userv1.RefreshRequest{RefreshToken: login3.RefreshToken})
 	assertCode(t, err, codes.FailedPrecondition, "e2e 禁用账号刷新")
@@ -219,7 +238,7 @@ func TestUserServiceEndToEnd(t *testing.T) {
 //
 // 健康检查供编排系统探测；反射供 grpcurl 等工具动态发现服务定义。
 func TestHealthAndReflection(t *testing.T) {
-	_, healthClient, conn, _ := newE2EClient(t)
+	_, healthClient, conn, _, _, _ := newE2EClient(t)
 	ctx := t.Context()
 
 	// 健康检查：默认服务（""）应返回 SERVING
@@ -256,18 +275,16 @@ func TestHealthAndReflection(t *testing.T) {
 	}
 }
 
-// TestConcurrentRefreshReuse 并发刷新竞争测试
+// TestConcurrentRefresh 并发刷新竞争测试
 //
-// 同一 refresh token 被并发使用时，轮换事务的条件作废（revoked_at IS NULL）
-// 保证最多一个成功；失败方命中重用检测，返回 Unauthenticated。
-func TestConcurrentRefreshReuse(t *testing.T) {
-	client, _, _, _ := newE2EClient(t)
+// 同一 refresh token 被并发使用时，轮换事务的条件更新（token_hash 仍为旧值）
+// 保证最多一个成功，失败方按无效拒绝（Unauthenticated）。
+func TestConcurrentRefresh(t *testing.T) {
+	client, _, _, _, h, mr := newE2EClient(t)
 	ctx := t.Context()
 
-	if _, err := client.Register(ctx, &userv1.RegisterRequest{Username: "race_user", Password: "password123"}); err != nil {
-		t.Fatalf("Register() 错误: %v", err)
-	}
-	login, err := client.Login(ctx, &userv1.LoginRequest{Username: "race_user", Password: "password123"})
+	e2eRegister(t, client, h, mr, "race@example.com", "password123")
+	login, err := client.Login(ctx, &userv1.LoginRequest{Email: "race@example.com", Password: "password123"})
 	if err != nil {
 		t.Fatalf("Login() 错误: %v", err)
 	}

@@ -2,7 +2,6 @@ package auth
 
 import (
 	"context"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -12,12 +11,17 @@ import (
 	"github.com/cloudwego/hertz/pkg/common/ut"
 	"github.com/cloudwego/hertz/pkg/route"
 	"github.com/golang-jwt/jwt/v5"
+
+	"github.com/gangantongxue/GanRAG/pkg/eid"
 )
 
 const (
 	testSecret = "test-secret"
 	testIssuer = "ganrag"
 )
+
+// testXID 测试用合法用户业务主键（usr_<xid> 全串）
+var testXID = eid.New(eid.User)
 
 // issueToken 按 user 服务的签发约定构造一个 access token
 //
@@ -47,11 +51,11 @@ func issueToken(t *testing.T, sub, issuer string, ttl time.Duration) string {
 
 // newTestEngine 构造仅挂载验签中间件与回显 handler 的测试引擎
 //
-// 回显 handler 把验签得到的用户 ID 写进响应体，便于断言注入结果。
+// 回显 handler 把验签得到的用户 xid 写进响应体，便于断言注入结果。
 func newTestEngine() *route.Engine {
 	h := server.New()
 	h.GET("/me", Middleware(testSecret, testIssuer), func(ctx context.Context, c *app.RequestContext) {
-		c.JSON(200, map[string]any{"user_id": UserID(c)})
+		c.JSON(200, map[string]any{"user_xid": UserXID(c)})
 	})
 	return h.Engine
 }
@@ -71,16 +75,16 @@ func perform(authHeader string) *ut.ResponseRecorder {
 	return ut.PerformRequest(newTestEngine(), "GET", "/me", nil, headers...)
 }
 
-// TestMiddleware_ValidToken 验证合法 token 通过验签并把用户 ID 注入上下文
+// TestMiddleware_ValidToken 验证合法 token 通过验签并把用户 xid 注入上下文
 func TestMiddleware_ValidToken(t *testing.T) {
-	token := issueToken(t, "42", testIssuer, 15*time.Minute)
+	token := issueToken(t, testXID, testIssuer, 15*time.Minute)
 	w := perform("Bearer " + token)
 
 	if w.Code != 200 {
 		t.Fatalf("状态码 = %d，期望 200（响应体: %s）", w.Code, w.Body.String())
 	}
-	if !strings.Contains(w.Body.String(), `"user_id":42`) {
-		t.Errorf("响应体未包含注入的用户 ID: %s", w.Body.String())
+	if !strings.Contains(w.Body.String(), `"user_xid":"`+testXID+`"`) {
+		t.Errorf("响应体未包含注入的用户 xid: %s", w.Body.String())
 	}
 }
 
@@ -92,9 +96,11 @@ func TestMiddleware_Rejected(t *testing.T) {
 	}{
 		{"缺少 Authorization 头", ""},
 		{"非 Bearer 格式", "Basic dXNlcjpwYXNz"},
-		{"token 篡改（签名不匹配）", "Bearer " + issueToken(t, "42", testIssuer, 15*time.Minute) + "x"},
-		{"已过期 token", "Bearer " + issueToken(t, "42", testIssuer, -time.Minute)},
-		{"签发方不符", "Bearer " + issueToken(t, "42", "other", 15*time.Minute)},
+		{"token 篡改（签名不匹配）", "Bearer " + issueToken(t, testXID, testIssuer, 15*time.Minute) + "x"},
+		{"已过期 token", "Bearer " + issueToken(t, testXID, testIssuer, -time.Minute)},
+		{"签发方不符", "Bearer " + issueToken(t, testXID, "other", 15*time.Minute)},
+		{"sub 非业务主键（历史数字口径）", "Bearer " + issueToken(t, "42", testIssuer, 15*time.Minute)},
+		{"sub 跨实体串用（ses_ 前缀）", "Bearer " + issueToken(t, eid.New(eid.Session), testIssuer, 15*time.Minute)},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -110,18 +116,18 @@ func TestMiddleware_Rejected(t *testing.T) {
 	}
 }
 
-// TestUserID_未认证返回零值 验证未注入 user_id 的上下文返回 0
-func TestUserID_未认证返回零值(t *testing.T) {
+// TestUserXID_未认证返回零值 验证未注入用户 xid 的上下文返回空串
+func TestUserXID_未认证返回零值(t *testing.T) {
 	// 用空 context 直接构造请求上下文，模拟未经中间件的场景
 	h := server.New()
-	var got int64
+	var got string
 	h.GET("/", func(ctx context.Context, c *app.RequestContext) {
-		got = UserID(c)
+		got = UserXID(c)
 		c.Status(204)
 	})
 	ut.PerformRequest(h.Engine, "GET", "/", nil)
-	if got != 0 {
-		t.Errorf("UserID = %d，期望 0", got)
+	if got != "" {
+		t.Errorf("UserXID = %q，期望空串", got)
 	}
 }
 
@@ -150,11 +156,11 @@ func TestBearerToken(t *testing.T) {
 	}
 }
 
-// TestVerify_用户ID解析 验证 sub 声明解析为用户 ID
-func TestVerify_用户ID解析(t *testing.T) {
-	token := issueToken(t, strconv.FormatInt(7, 10), testIssuer, 15*time.Minute)
-	id, ok := verify(token, testSecret, testIssuer)
-	if !ok || id != 7 {
-		t.Errorf("verify = (%d, %v)，期望 (7, true)", id, ok)
+// TestVerify_用户xid解析 验证 sub 声明解析为用户业务主键
+func TestVerify_用户xid解析(t *testing.T) {
+	token := issueToken(t, testXID, testIssuer, 15*time.Minute)
+	xid, ok := verify(token, testSecret, testIssuer)
+	if !ok || xid != testXID {
+		t.Errorf("verify = (%q, %v)，期望 (%q, true)", xid, ok, testXID)
 	}
 }

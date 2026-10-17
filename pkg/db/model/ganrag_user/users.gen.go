@@ -13,9 +13,10 @@ const TableNameUser = "users"
 // User mapped from table <users>
 type User struct {
 	ID           int64     `gorm:"column:id;primaryKey;autoIncrement:true" json:"id"`
+	Xid          string    `gorm:"column:xid;not null;comment:业务主键，形如 usr_<xid>（pkg/eid），对外标识" json:"xid"` // 业务主键，形如 usr_<xid>（pkg/eid），对外标识
+	Email        string    `gorm:"column:email;not null" json:"email"`
 	Username     string    `gorm:"column:username;not null" json:"username"`
 	PasswordHash string    `gorm:"column:password_hash;not null" json:"password_hash"`
-	Nickname     string    `gorm:"column:nickname;not null" json:"nickname"`
 	Status       int32     `gorm:"column:status;not null;default:1" json:"status"`
 	CreatedAt    time.Time `gorm:"column:created_at;not null;default:CURRENT_TIMESTAMP" json:"created_at"`
 	UpdatedAt    time.Time `gorm:"column:updated_at;not null;default:CURRENT_TIMESTAMP" json:"updated_at"`

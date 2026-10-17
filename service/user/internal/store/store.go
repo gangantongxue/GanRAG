@@ -1,4 +1,4 @@
-// Package store 负责 User 服务的用户与 refresh token 数据访问
+// Package store 负责 User 服务的用户与登录会话数据访问
 //
 // 模型与类型化查询由 `task db-gen` 生成（pkg/db/model/ganrag_user、
 // pkg/db/query/ganrag_user），本包只承载业务查询逻辑与错误语义。
@@ -16,10 +16,9 @@ import (
 // （同一错误在不同 RPC 有契约分歧时由 handler 覆盖，见 server 包上下文错误变量；
 // 映射逻辑统一在 pkg/errcode，禁止在服务内另行定义错误码映射）
 var (
-	ErrUserNotFound    = errcode.New(codes.NotFound, "用户不存在")                   // 按 ID / 用户名均未命中
-	ErrUsernameTaken   = errcode.New(codes.AlreadyExists, "用户名已存在")             // 注册时用户名冲突
-	ErrRefreshNotFound = errcode.New(codes.Unauthenticated, "refresh token 无效") // 哈希未命中（伪造 token）
-	ErrRefreshRevoked  = errcode.New(codes.Unauthenticated, "refresh token 无效") // revoked_at 非空（重用检测信号）
+	ErrUserNotFound    = errcode.New(codes.NotFound, "用户不存在")                   // 按 ID / xid / 邮箱均未命中
+	ErrEmailTaken      = errcode.New(codes.AlreadyExists, "邮箱已注册")              // 注册时邮箱冲突
+	ErrSessionNotFound = errcode.New(codes.Unauthenticated, "refresh token 无效") // 哈希未命中 / 并发轮换（伪造或已失效）
 )
 
 // 用户状态常量（对应 users.status 列）

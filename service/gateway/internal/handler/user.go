@@ -40,13 +40,15 @@ func NewUserHandler(conn *grpc.ClientConn, log *slog.Logger) *UserHandler {
 
 // registerRequest POST /api/v1/auth/register 请求体
 type registerRequest struct {
-	Username string `json:"username"` // 3-32 字符，字母数字与 _ -
+	Email    string `json:"email"`    // 邮箱（唯一登录标识）
+	Code     string `json:"code"`     // 邮箱验证码（scene=register）
 	Password string `json:"password"` // 8-64 字符
+	Username string `json:"username"` // 展示名，可选（≤64 字符）
 }
 
 // loginRequest POST /api/v1/auth/login 请求体
 type loginRequest struct {
-	Username string `json:"username"`
+	Email    string `json:"email"`
 	Password string `json:"password"`
 }
 
@@ -57,7 +59,7 @@ type refreshRequest struct {
 
 // updatePasswordRequest PUT /api/v1/users/me/password 请求体
 //
-// 不含 user_id：由 Gateway 从 access token 解析后注入，不信任请求体。
+// 不含用户标识：由 Gateway 从 access token 解析后注入，不信任请求体。
 type updatePasswordRequest struct {
 	OldPassword string `json:"old_password"`
 	NewPassword string `json:"new_password"` // 8-64 字符
@@ -95,8 +97,10 @@ func (h *UserHandler) Register(ctx context.Context, c *app.RequestContext) {
 		return
 	}
 	resp, err := h.client.Register(ctx, &userv1.RegisterRequest{
-		Username: req.Username,
+		Email:    req.Email,
+		Code:     req.Code,
 		Password: req.Password,
+		Username: req.Username,
 	})
 	h.respond(c, resp, err, "register")
 }
@@ -109,7 +113,7 @@ func (h *UserHandler) Login(ctx context.Context, c *app.RequestContext) {
 		return
 	}
 	resp, err := h.client.Login(ctx, &userv1.LoginRequest{
-		Username: req.Username,
+		Email:    req.Email,
 		Password: req.Password,
 	})
 	h.respond(c, resp, err, "login")
@@ -130,17 +134,17 @@ func (h *UserHandler) Refresh(ctx context.Context, c *app.RequestContext) {
 
 // Me 获取当前登录用户信息（需验签）
 //
-// 用户 ID 取自验签通过的 access token，不接受请求体/查询参数指定。
+// 用户 xid 取自验签通过的 access token，不接受请求体/查询参数指定。
 func (h *UserHandler) Me(ctx context.Context, c *app.RequestContext) {
 	resp, err := h.client.GetUser(ctx, &userv1.GetUserRequest{
-		Id: auth.UserID(c),
+		Xid: auth.UserXID(c),
 	})
 	h.respond(c, resp, err, "get_user")
 }
 
 // UpdatePassword 修改当前用户密码（需验签）
 //
-// user_id 由验签结果注入请求，不信任请求体。
+// 用户 xid 由验签结果注入请求，不信任请求体。
 func (h *UserHandler) UpdatePassword(ctx context.Context, c *app.RequestContext) {
 	var req updatePasswordRequest
 	if err := c.Bind(&req); err != nil {
@@ -148,7 +152,7 @@ func (h *UserHandler) UpdatePassword(ctx context.Context, c *app.RequestContext)
 		return
 	}
 	resp, err := h.client.UpdatePassword(ctx, &userv1.UpdatePasswordRequest{
-		UserId:      auth.UserID(c),
+		UserXid:     auth.UserXID(c),
 		OldPassword: req.OldPassword,
 		NewPassword: req.NewPassword,
 	})

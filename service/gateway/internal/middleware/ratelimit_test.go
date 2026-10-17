@@ -62,10 +62,10 @@ func TestKey_双维度分桶(t *testing.T) {
 		t.Errorf("不同 IP 应不同桶: %q", k1)
 	}
 	// 登录用户：同用户同桶（与 IP 无关），与匿名桶隔离
-	if u1, u2 := userKey(42), userKey(42); u1 != u2 {
+	if u1, u2 := userKey("usr_a"), userKey("usr_a"); u1 != u2 {
 		t.Errorf("同用户应同桶: %q vs %q", u1, u2)
 	}
-	if userKey(42) == anonKey("10.0.0.1") {
+	if userKey("usr_a") == anonKey("10.0.0.1") {
 		t.Error("用户桶与 IP 桶必须隔离")
 	}
 }
@@ -74,16 +74,12 @@ func TestKey_双维度分桶(t *testing.T) {
 func TestMiddleware_用户维度隔离(t *testing.T) {
 	rl := NewRateLimiter(testLimiterConfig())
 	h := server.New()
-	// 模拟验签后的受保护路由：中间件只挂默认限流，user_id 由前置验签注入
+	// 模拟验签后的受保护路由：中间件只挂默认限流，用户 xid 由前置验签注入
 	g := h.Group("/api/v1")
 	g.Use(func(ctx context.Context, c *app.RequestContext) {
-		// 按请求头 X-User-Id 模拟验签注入
-		if v := string(c.GetHeader("X-User-Id")); v != "" {
-			var id int64
-			for _, ch := range v {
-				id = id*10 + int64(ch-'0')
-			}
-			c.Set("gateway.user_id", id)
+		// 按请求头 X-User-Xid 模拟验签注入
+		if v := string(c.GetHeader("X-User-Xid")); v != "" {
+			c.Set("gateway.user_xid", v)
 		}
 		c.Next(ctx)
 	})
@@ -93,20 +89,20 @@ func TestMiddleware_用户维度隔离(t *testing.T) {
 	// 用户 1 打满默认桶（容量 3）后的第 4 个请求被限流
 	for i := 0; i < 3; i++ {
 		w := ut.PerformRequest(h.Engine, "GET", "/api/v1/users/me", nil,
-			ut.Header{Key: "X-User-Id", Value: "1"})
+			ut.Header{Key: "X-User-Xid", Value: "usr_user1"})
 		if w.Code != 200 {
 			t.Fatalf("用户 1 第 %d 个请求状态码 = %d，期望 200", i+1, w.Code)
 		}
 	}
 	w := ut.PerformRequest(h.Engine, "GET", "/api/v1/users/me", nil,
-		ut.Header{Key: "X-User-Id", Value: "1"})
+		ut.Header{Key: "X-User-Xid", Value: "usr_user1"})
 	if w.Code != 429 {
 		t.Fatalf("用户 1 超限请求状态码 = %d，期望 429", w.Code)
 	}
 
 	// 用户 2 额度独立，不受用户 1 影响
 	w = ut.PerformRequest(h.Engine, "GET", "/api/v1/users/me", nil,
-		ut.Header{Key: "X-User-Id", Value: "2"})
+		ut.Header{Key: "X-User-Xid", Value: "usr_user2"})
 	if w.Code != 200 {
 		t.Errorf("用户 2 请求状态码 = %d，期望 200（额度应与用户 1 隔离）", w.Code)
 	}

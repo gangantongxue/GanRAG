@@ -3,7 +3,6 @@ package middleware
 
 import (
 	"context"
-	"fmt"
 	"sync"
 	"time"
 
@@ -128,7 +127,7 @@ func (l *RateLimiter) evictLocked() {
 	}
 }
 
-// key 计算当前请求的分桶键：已登录按用户 ID，匿名按客户端 IP
+// key 计算当前请求的分桶键：已登录按用户 xid，匿名按客户端 IP
 //
 // 参数：
 //   - c: Hertz 请求上下文
@@ -136,15 +135,15 @@ func (l *RateLimiter) evictLocked() {
 // 返回：
 //   - string: 分桶键
 func key(c *app.RequestContext) string {
-	if id := auth.UserID(c); id != 0 {
-		return userKey(id)
+	if xid := auth.UserXID(c); xid != "" {
+		return userKey(xid)
 	}
 	return anonKey(c.ClientIP())
 }
 
 // userKey 已登录用户的分桶键（与来源 IP 无关，多端共享额度）
-func userKey(id int64) string {
-	return fmt.Sprintf("u:%d", id)
+func userKey(xid string) string {
+	return "u:" + xid
 }
 
 // anonKey 匿名请求的分桶键（按客户端 IP 隔离）

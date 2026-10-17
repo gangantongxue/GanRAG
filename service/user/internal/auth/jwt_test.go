@@ -5,6 +5,8 @@ import (
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
+
+	"github.com/gangantongxue/GanRAG/pkg/eid"
 )
 
 // TestIssueAccessToken 验证 access token 签发与载荷内容（Gateway 本地验签的契约）
@@ -14,8 +16,9 @@ func TestIssueAccessToken(t *testing.T) {
 		issuer = "ganrag-test"
 	)
 	ttl := 15 * time.Minute
+	xid := eid.New(eid.User)
 
-	token, err := IssueAccessToken(secret, issuer, ttl, 42, "alice")
+	token, err := IssueAccessToken(secret, issuer, ttl, xid, "alice")
 	if err != nil {
 		t.Fatalf("IssueAccessToken() 错误: %v", err)
 	}
@@ -34,8 +37,8 @@ func TestIssueAccessToken(t *testing.T) {
 	if !ok {
 		t.Fatalf("载荷类型断言失败: %T", parsed.Claims)
 	}
-	if sub, _ := claims.GetSubject(); sub != "42" {
-		t.Errorf("sub = %q，期望 %q", sub, "42")
+	if sub, _ := claims.GetSubject(); sub != xid {
+		t.Errorf("sub = %q，期望 %q", sub, xid)
 	}
 	if got := claims["username"]; got != "alice" {
 		t.Errorf("username = %v，期望 alice", got)
@@ -56,7 +59,7 @@ func TestIssueAccessToken(t *testing.T) {
 
 // TestIssueAccessToken_WrongSecret 验证密钥不一致时验签失败
 func TestIssueAccessToken_WrongSecret(t *testing.T) {
-	token, err := IssueAccessToken("secret-a", "ganrag", time.Minute, 1, "bob")
+	token, err := IssueAccessToken("secret-a", "ganrag", time.Minute, eid.New(eid.User), "bob")
 	if err != nil {
 		t.Fatalf("IssueAccessToken() 错误: %v", err)
 	}

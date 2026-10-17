@@ -33,21 +33,23 @@ const (
 //
 // # UserService 服务：账号生命周期管理
 //
-// 提供注册、登录（双 token 签发）、refresh token 轮换、用户信息查询与修改密码。
-// access token 的校验由 Gateway 负责（本地验签，不回源本服务）。
+// 提供注册（邮箱+验证码）、登录（邮箱+密码，双 token 签发）、refresh token 轮换、
+// 用户信息查询与修改密码。access token 的校验由 Gateway 负责（本地验签，不回源本服务）。
+// 对外标识一律 xid 全串（pkg/eid，如 usr_<xid>），数据库自增 id 不出服务
+// （对齐根 AGENTS.md「业务主键（XID）规范」）。
 // 注：架构文档草案中 service 与 message 同名为 User，proto3 禁止，service 更名为 UserService。
 type UserServiceClient interface {
 	// SendEmailCode 发送邮箱验证码（register / reset_password；验证码存 Redis，SMTP 下发）
 	SendEmailCode(ctx context.Context, in *SendEmailCodeRequest, opts ...grpc.CallOption) (*SendEmailCodeResponse, error)
-	// Register 用户注册（校验用户名唯一性，密码 bcrypt 哈希存储）
+	// Register 用户注册（邮箱唯一，密码 bcrypt 哈希存储，需邮箱验证码）
 	Register(ctx context.Context, in *RegisterRequest, opts ...grpc.CallOption) (*RegisterResponse, error)
-	// Login 用户登录（校验凭证，签发 access + refresh 双 token）
+	// Login 用户登录（邮箱+密码校验凭证，签发 access + refresh 双 token）
 	Login(ctx context.Context, in *LoginRequest, opts ...grpc.CallOption) (*LoginResponse, error)
-	// Refresh 轮换 token 对（旧 refresh 作废；重用已作废 token 视为泄露，吊销该用户全部 refresh）
+	// Refresh 轮换 token 对（sessions.token_hash 原地更新；旧 token 复用按无效拒绝）
 	Refresh(ctx context.Context, in *RefreshRequest, opts ...grpc.CallOption) (*RefreshResponse, error)
-	// GetUser 按 ID 查询用户信息（供 Gateway / 其他服务调用）
+	// GetUser 按 xid 查询用户信息（供 Gateway / 其他服务调用）
 	GetUser(ctx context.Context, in *GetUserRequest, opts ...grpc.CallOption) (*GetUserResponse, error)
-	// UpdatePassword 修改密码（校验旧密码，成功后吊销该用户全部 refresh token）
+	// UpdatePassword 修改密码（校验旧密码，成功后删除该用户全部 sessions）
 	UpdatePassword(ctx context.Context, in *UpdatePasswordRequest, opts ...grpc.CallOption) (*UpdatePasswordResponse, error)
 }
 
@@ -125,21 +127,23 @@ func (c *userServiceClient) UpdatePassword(ctx context.Context, in *UpdatePasswo
 //
 // # UserService 服务：账号生命周期管理
 //
-// 提供注册、登录（双 token 签发）、refresh token 轮换、用户信息查询与修改密码。
-// access token 的校验由 Gateway 负责（本地验签，不回源本服务）。
+// 提供注册（邮箱+验证码）、登录（邮箱+密码，双 token 签发）、refresh token 轮换、
+// 用户信息查询与修改密码。access token 的校验由 Gateway 负责（本地验签，不回源本服务）。
+// 对外标识一律 xid 全串（pkg/eid，如 usr_<xid>），数据库自增 id 不出服务
+// （对齐根 AGENTS.md「业务主键（XID）规范」）。
 // 注：架构文档草案中 service 与 message 同名为 User，proto3 禁止，service 更名为 UserService。
 type UserServiceServer interface {
 	// SendEmailCode 发送邮箱验证码（register / reset_password；验证码存 Redis，SMTP 下发）
 	SendEmailCode(context.Context, *SendEmailCodeRequest) (*SendEmailCodeResponse, error)
-	// Register 用户注册（校验用户名唯一性，密码 bcrypt 哈希存储）
+	// Register 用户注册（邮箱唯一，密码 bcrypt 哈希存储，需邮箱验证码）
 	Register(context.Context, *RegisterRequest) (*RegisterResponse, error)
-	// Login 用户登录（校验凭证，签发 access + refresh 双 token）
+	// Login 用户登录（邮箱+密码校验凭证，签发 access + refresh 双 token）
 	Login(context.Context, *LoginRequest) (*LoginResponse, error)
-	// Refresh 轮换 token 对（旧 refresh 作废；重用已作废 token 视为泄露，吊销该用户全部 refresh）
+	// Refresh 轮换 token 对（sessions.token_hash 原地更新；旧 token 复用按无效拒绝）
 	Refresh(context.Context, *RefreshRequest) (*RefreshResponse, error)
-	// GetUser 按 ID 查询用户信息（供 Gateway / 其他服务调用）
+	// GetUser 按 xid 查询用户信息（供 Gateway / 其他服务调用）
 	GetUser(context.Context, *GetUserRequest) (*GetUserResponse, error)
-	// UpdatePassword 修改密码（校验旧密码，成功后吊销该用户全部 refresh token）
+	// UpdatePassword 修改密码（校验旧密码，成功后删除该用户全部 sessions）
 	UpdatePassword(context.Context, *UpdatePasswordRequest) (*UpdatePasswordResponse, error)
 	mustEmbedUnimplementedUserServiceServer()
 }

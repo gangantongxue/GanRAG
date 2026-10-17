@@ -77,7 +77,7 @@
 注册/登录 ──user──▶ { access(15m), refresh(7d) }
    │
    ▼ 前端携带 access
-Gateway ──本地验签（共享密钥）──▶ 通过则转发，user_id 注入请求上下文
+Gateway ──本地验签（共享密钥）──▶ 通过则转发，用户 xid 注入请求上下文
    │
    ▼ access 过期（401）
 前端调 /auth/refresh ──Gateway 转发（无需 access）──▶ user.Refresh(refresh)
@@ -87,7 +87,7 @@ Gateway ──本地验签（共享密钥）──▶ 通过则转发，user_id 
 ```
 
 - refresh 请求**必须绕过 access 校验**：Gateway 的 `/auth/refresh` 路由不做认证，直接转发
-- access token 中携带 `sub`（用户 ID）与 `username`（展示名）；Gateway 解析后将 `user_id` 透传给下游服务
+- access token 中携带 `sub`（用户 xid 全串）与 `username`（展示名）；Gateway 解析后将用户 xid 透传给下游服务
 - 用户禁用（`status=0`）后，refresh 与新登录均拒绝；access 在其自然过期前仍可通过验签（15 分钟窗口可接受）
 
 ## 接口设计
@@ -117,7 +117,7 @@ service UserService {
 }
 
 message User {
-  int64  id = 1;         // 用户 ID（自增主键）
+  string xid = 1;        // 业务主键 usr_<xid> 全串（对外唯一标识，pkg/eid）
   string email = 2;      // 登录标识（唯一）
   string username = 3;   // 展示名，可重复、可为空
   int32  status = 4;     // 1 正常 0 禁用
@@ -162,11 +162,11 @@ message RefreshResponse {
   int64  refresh_expires_in = 4;
 }
 
-message GetUserRequest { int64 id = 1; }
+message GetUserRequest { string xid = 1; }   // 用户业务主键 usr_<xid> 全串
 message GetUserResponse { User user = 1; }
 
 message UpdatePasswordRequest {
-  int64  user_id = 1;      // 由 Gateway 从 access token 解析后注入，不信任请求体
+  string user_xid = 1;   // 由 Gateway 从 access token 解析后注入，不信任请求体
   string old_password = 2;
   string new_password = 3; // 8-64 字符
 }
@@ -180,17 +180,17 @@ message ResetPasswordRequest {
 message ResetPasswordResponse {}
 
 message Session {
-  int64  id = 1;
+  string xid = 1;      // 会话业务主键 ses_<xid> 全串
   string device_id = 2;
   string device_info = 3;
   int64  last_active_at_unix = 4;
   int64  created_at_unix = 5;
 }
-message ListSessionsRequest { int64 user_id = 1; }   // Gateway 从 access token 注入
+message ListSessionsRequest { string user_xid = 1; }   // Gateway 从 access token 注入
 message ListSessionsResponse { repeated Session sessions = 1; }  // 仅返回在线（revoked_at IS NULL）会话
 message RevokeSessionRequest {
-  int64 user_id = 1;    // Gateway 注入
-  int64 session_id = 2;
+  string user_xid = 1;   // Gateway 注入
+  string session_xid = 2;
 }
 message RevokeSessionResponse {}
 ```
@@ -206,9 +206,9 @@ message RevokeSessionResponse {}
 | Login | 邮箱不存在与密码错误**统一返回** `Unauthenticated` | `Unauthenticated`；`FailedPrecondition` 用户被禁用 |
 | Refresh | token 过期 / 无效（含轮换后旧 token 复用，按无效拒绝） | `Unauthenticated` |
 | GetUser | 目标不存在 | `NotFound` |
-| UpdatePassword | user_id 缺失、新密码不合法 | `InvalidArgument`；`Unauthenticated` 旧密码错误或用户不存在（user_id 由 Gateway 从 token 注入，用户不存在说明凭证陈旧，与防枚举策略一致，不返回 `NotFound`） |
+| UpdatePassword | user_xid 不合法、新密码不合法 | `InvalidArgument`；`Unauthenticated` 旧密码错误或用户不存在（user_xid 由 Gateway 从 token 注入，用户不存在说明凭证陈旧，与防枚举策略一致，不返回 `NotFound`） |
 | ResetPassword | 验证码有效、新密码 8-64 字符 | `InvalidArgument`；`Unauthenticated` 验证码无效（「忘记密码接口」） |
-| ListSessions / RevokeSession | user_id 由 Gateway 注入；session_id 需归属该用户 | `InvalidArgument`；`NotFound` 会话不存在（「登录设备管理接口」） |
+| ListSessions / RevokeSession | user_xid 由 Gateway 注入；session_xid 需归属该用户 | `InvalidArgument`；`NotFound` 会话不存在（「登录设备管理接口」） |
 
 - Login 不区分「邮箱不存在」与「密码错误」，防止账号枚举；Register / ResetPassword 同样不回传「邮箱是否已注册」等可枚举信息
 - 所有接口错误细节只写日志，不回传内部信息（与 vector-store 约定一致）

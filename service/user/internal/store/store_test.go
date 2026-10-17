@@ -12,6 +12,7 @@ import (
 	gormlogger "gorm.io/gorm/logger"
 
 	dbmodel "github.com/gangantongxue/GanRAG/pkg/db/model/ganrag_user"
+	"github.com/gangantongxue/GanRAG/pkg/eid"
 )
 
 // newTestStore 用 SQLite 临时文件库构造测试 Store
@@ -32,33 +33,36 @@ func newTestStore(t *testing.T) (*Store, *gorm.DB) {
 	if err != nil {
 		t.Fatalf("打开 SQLite 失败: %v", err)
 	}
-	if err := db.AutoMigrate(&dbmodel.User{}, &dbmodel.RefreshToken{}, &dbmodel.UserFollow{}); err != nil {
+	if err := db.AutoMigrate(&dbmodel.User{}, &dbmodel.Session{}, &dbmodel.UserFollow{}); err != nil {
 		t.Fatalf("建表失败: %v", err)
 	}
 	return New(db), db
 }
 
-// mustCreateUser 创建测试用户并返回其 ID
-func mustCreateUser(t *testing.T, s *Store, username string) int64 {
+// mustCreateUser 创建测试用户并返回其 ID（email 用 name 拼装，展示名同名）
+func mustCreateUser(t *testing.T, s *Store, name string) int64 {
 	t.Helper()
-	u, err := s.CreateUser(context.Background(), username, "hash-"+username, username)
+	u, err := s.CreateUser(context.Background(), name+"@example.com", name, "hash-"+name)
 	if err != nil {
-		t.Fatalf("CreateUser(%s) 错误: %v", username, err)
+		t.Fatalf("CreateUser(%s) 错误: %v", name, err)
 	}
 	return u.ID
 }
 
-// TestCreateUser 验证创建用户与用户名唯一性
+// TestCreateUser 验证创建用户、xid 生成与邮箱唯一性
 func TestCreateUser(t *testing.T) {
 	s, _ := newTestStore(t)
 	ctx := context.Background()
 
-	u, err := s.CreateUser(ctx, "alice", "hash-alice", "alice")
+	u, err := s.CreateUser(ctx, "alice@example.com", "alice", "hash-alice")
 	if err != nil {
 		t.Fatalf("CreateUser() 错误: %v", err)
 	}
 	if u.ID <= 0 {
 		t.Errorf("ID = %d，期望自增主键 > 0", u.ID)
+	}
+	if !eid.Match(u.Xid, eid.User) {
+		t.Errorf("Xid = %q，期望 usr_ 前缀业务主键", u.Xid)
 	}
 	if u.Status != StatusNormal {
 		t.Errorf("Status = %d，期望 %d", u.Status, StatusNormal)
@@ -67,13 +71,13 @@ func TestCreateUser(t *testing.T) {
 		t.Error("创建/更新时间不应为零值")
 	}
 
-	// 重复用户名
-	if _, err := s.CreateUser(ctx, "alice", "hash-2", "alice"); !errors.Is(err, ErrUsernameTaken) {
-		t.Errorf("重复注册错误 = %v，期望 ErrUsernameTaken", err)
+	// 重复邮箱
+	if _, err := s.CreateUser(ctx, "alice@example.com", "alice2", "hash-2"); !errors.Is(err, ErrEmailTaken) {
+		t.Errorf("重复注册错误 = %v，期望 ErrEmailTaken", err)
 	}
 }
 
-// TestGetUser 验证按 ID / 用户名查询与未命中映射
+// TestGetUser 验证按 ID / xid / 邮箱查询与未命中映射
 func TestGetUser(t *testing.T) {
 	s, _ := newTestStore(t)
 	ctx := context.Background()
@@ -87,50 +91,61 @@ func TestGetUser(t *testing.T) {
 		t.Errorf("Username = %q，期望 bob", byID.Username)
 	}
 
-	byName, err := s.GetUserByUsername(ctx, "bob")
+	byXID, err := s.GetUserByXID(ctx, byID.Xid)
 	if err != nil {
-		t.Fatalf("GetUserByUsername() 错误: %v", err)
+		t.Fatalf("GetUserByXID() 错误: %v", err)
 	}
-	if byName.ID != id {
-		t.Errorf("ID = %d，期望 %d", byName.ID, id)
+	if byXID.ID != id {
+		t.Errorf("ID = %d，期望 %d", byXID.ID, id)
+	}
+
+	byEmail, err := s.GetUserByEmail(ctx, "bob@example.com")
+	if err != nil {
+		t.Fatalf("GetUserByEmail() 错误: %v", err)
+	}
+	if byEmail.ID != id {
+		t.Errorf("ID = %d，期望 %d", byEmail.ID, id)
 	}
 
 	if _, err := s.GetUserByID(ctx, 99999); !errors.Is(err, ErrUserNotFound) {
 		t.Errorf("不存在 ID 错误 = %v，期望 ErrUserNotFound", err)
 	}
-	if _, err := s.GetUserByUsername(ctx, "ghost"); !errors.Is(err, ErrUserNotFound) {
-		t.Errorf("不存在用户名错误 = %v，期望 ErrUserNotFound", err)
+	if _, err := s.GetUserByXID(ctx, eid.New(eid.User)); !errors.Is(err, ErrUserNotFound) {
+		t.Errorf("不存在 xid 错误 = %v，期望 ErrUserNotFound", err)
+	}
+	if _, err := s.GetUserByEmail(ctx, "ghost@example.com"); !errors.Is(err, ErrUserNotFound) {
+		t.Errorf("不存在邮箱错误 = %v，期望 ErrUserNotFound", err)
 	}
 }
 
-// TestUpdatePassword 验证改密事务：更新哈希 + 吊销全部 refresh token
+// TestUpdatePassword 验证改密事务：更新哈希 + 删除全部会话
 func TestUpdatePassword(t *testing.T) {
 	s, _ := newTestStore(t)
 	ctx := context.Background()
 	id := mustCreateUser(t, s, "carol")
 
-	// 两个活跃 refresh token
-	if err := s.CreateRefreshToken(ctx, id, "hash-rt-1", time.Now().Add(time.Hour)); err != nil {
-		t.Fatalf("CreateRefreshToken() 错误: %v", err)
+	// 两个设备的活跃会话
+	if err := s.CreateSession(ctx, id, "dev-1", "", "hash-rt-1", time.Now().Add(time.Hour)); err != nil {
+		t.Fatalf("CreateSession() 错误: %v", err)
 	}
-	if err := s.CreateRefreshToken(ctx, id, "hash-rt-2", time.Now().Add(time.Hour)); err != nil {
-		t.Fatalf("CreateRefreshToken() 错误: %v", err)
+	if err := s.CreateSession(ctx, id, "dev-2", "", "hash-rt-2", time.Now().Add(time.Hour)); err != nil {
+		t.Fatalf("CreateSession() 错误: %v", err)
 	}
 
 	if err := s.UpdatePassword(ctx, id, "new-hash"); err != nil {
 		t.Fatalf("UpdatePassword() 错误: %v", err)
 	}
 
-	u, err := s.GetUserByUsername(ctx, "carol")
+	u, err := s.GetUserByEmail(ctx, "carol@example.com")
 	if err != nil {
-		t.Fatalf("GetUserByUsername() 错误: %v", err)
+		t.Fatalf("GetUserByEmail() 错误: %v", err)
 	}
 	if u.PasswordHash != "new-hash" {
 		t.Errorf("PasswordHash = %q，期望 new-hash", u.PasswordHash)
 	}
 	for _, h := range []string{"hash-rt-1", "hash-rt-2"} {
-		if _, err := s.GetRefreshToken(ctx, h); !errors.Is(err, ErrRefreshNotFound) {
-			t.Errorf("改密后 token %s 错误 = %v，期望被吊销(ErrRefreshNotFound)", h, err)
+		if _, err := s.GetSessionByTokenHash(ctx, h); !errors.Is(err, ErrSessionNotFound) {
+			t.Errorf("改密后会话 %s 错误 = %v，期望已删除(ErrSessionNotFound)", h, err)
 		}
 	}
 
@@ -140,95 +155,97 @@ func TestUpdatePassword(t *testing.T) {
 	}
 }
 
-// TestCreateRefreshToken_CleansExpired 验证惰性清理：写入时删除该用户过期记录
-func TestCreateRefreshToken_CleansExpired(t *testing.T) {
+// TestCreateSession_CleansExpired 验证惰性清理：建会话时删除该用户过期行
+func TestCreateSession_CleansExpired(t *testing.T) {
 	s, db := newTestStore(t)
 	ctx := context.Background()
 	id := mustCreateUser(t, s, "dave")
 
-	// 直接插入一条已过期记录
-	if err := db.Create(&dbmodel.RefreshToken{
-		UserID: id, TokenHash: "expired-hash", ExpiresAt: time.Now().Add(-time.Hour),
+	// 直接插入一条已过期会话
+	if err := db.Create(&dbmodel.Session{
+		Xid: eid.New(eid.Session), UserID: id, DeviceID: "dev-old",
+		TokenHash: "expired-hash", ExpiresAt: time.Now().Add(-time.Hour),
 	}).Error; err != nil {
-		t.Fatalf("插入过期记录失败: %v", err)
+		t.Fatalf("插入过期会话失败: %v", err)
 	}
 
-	if err := s.CreateRefreshToken(ctx, id, "fresh-hash", time.Now().Add(time.Hour)); err != nil {
-		t.Fatalf("CreateRefreshToken() 错误: %v", err)
+	if err := s.CreateSession(ctx, id, "dev-fresh", "", "fresh-hash", time.Now().Add(time.Hour)); err != nil {
+		t.Fatalf("CreateSession() 错误: %v", err)
 	}
 
-	if _, err := s.GetRefreshToken(ctx, "expired-hash"); !errors.Is(err, ErrRefreshNotFound) {
-		t.Errorf("过期记录错误 = %v，期望被惰性清理", err)
+	if _, err := s.GetSessionByTokenHash(ctx, "expired-hash"); !errors.Is(err, ErrSessionNotFound) {
+		t.Errorf("过期会话错误 = %v，期望被惰性清理", err)
 	}
-	if _, err := s.GetRefreshToken(ctx, "fresh-hash"); err != nil {
-		t.Errorf("新记录应存在: %v", err)
+	if _, err := s.GetSessionByTokenHash(ctx, "fresh-hash"); err != nil {
+		t.Errorf("新会话应存在: %v", err)
 	}
 }
 
-// TestRotateRefreshToken 验证轮换：作废旧记录 + 插入新记录 + 二次轮换检出
-func TestRotateRefreshToken(t *testing.T) {
-	s, _ := newTestStore(t)
+// TestRotateSession 验证轮换原地更新 token_hash、不增行、旧 hash 失效
+func TestRotateSession(t *testing.T) {
+	s, db := newTestStore(t)
 	ctx := context.Background()
 	id := mustCreateUser(t, s, "erin")
 
-	if err := s.CreateRefreshToken(ctx, id, "old-hash", time.Now().Add(time.Hour)); err != nil {
-		t.Fatalf("CreateRefreshToken() 错误: %v", err)
+	if err := s.CreateSession(ctx, id, "dev-1", "", "old-hash", time.Now().Add(time.Hour)); err != nil {
+		t.Fatalf("CreateSession() 错误: %v", err)
 	}
-	old, err := s.GetRefreshToken(ctx, "old-hash")
+	old, err := s.GetSessionByTokenHash(ctx, "old-hash")
 	if err != nil {
-		t.Fatalf("GetRefreshToken() 错误: %v", err)
-	}
-	if old.RevokedAt != nil {
-		t.Fatal("新签发的 token 不应已作废")
+		t.Fatalf("GetSessionByTokenHash() 错误: %v", err)
 	}
 
-	// 轮换：旧的标记作废（保留行供重用检测），新的插入
-	if err := s.RotateRefreshToken(ctx, old, "new-hash", time.Now().Add(time.Hour)); err != nil {
-		t.Fatalf("RotateRefreshToken() 错误: %v", err)
+	// 轮换：原地更新 token_hash
+	if err := s.RotateSession(ctx, old, "new-hash", time.Now().Add(time.Hour)); err != nil {
+		t.Fatalf("RotateSession() 错误: %v", err)
 	}
-	revoked, err := s.GetRefreshToken(ctx, "old-hash")
-	if err != nil {
-		t.Fatalf("轮换后旧记录应仍可查（重用检测依赖）: %v", err)
+	if _, err := s.GetSessionByTokenHash(ctx, "old-hash"); !errors.Is(err, ErrSessionNotFound) {
+		t.Errorf("旧 hash 错误 = %v，期望不再命中（按无效拒绝）", err)
 	}
-	if revoked.RevokedAt == nil {
-		t.Error("旧记录 RevokedAt 应非空")
+	if _, err := s.GetSessionByTokenHash(ctx, "new-hash"); err != nil {
+		t.Errorf("新 hash 应命中: %v", err)
 	}
-	if _, err := s.GetRefreshToken(ctx, "new-hash"); err != nil {
-		t.Errorf("新记录应存在: %v", err)
+	// 不增行：仍是单设备单行
+	var n int64
+	if err := db.Model(&dbmodel.Session{}).Where("user_id = ?", id).Count(&n).Error; err != nil {
+		t.Fatalf("统计会话行失败: %v", err)
+	}
+	if n != 1 {
+		t.Errorf("会话行数 = %d，期望 1（轮换不增行）", n)
 	}
 
-	// 再次轮换同一旧记录：检出重用
-	if err := s.RotateRefreshToken(ctx, old, "another-hash", time.Now().Add(time.Hour)); !errors.Is(err, ErrRefreshRevoked) {
-		t.Errorf("二次轮换错误 = %v，期望 ErrRefreshRevoked", err)
+	// 旧会话行（token_hash 已变）再轮换：条件更新不命中，按无效拒绝
+	if err := s.RotateSession(ctx, old, "another-hash", time.Now().Add(time.Hour)); !errors.Is(err, ErrSessionNotFound) {
+		t.Errorf("陈旧行二次轮换错误 = %v，期望 ErrSessionNotFound", err)
 	}
 }
 
-// TestRevokeAllRefreshTokens 验证吊销该用户全部 token（重用检测 / 改密场景）
-func TestRevokeAllRefreshTokens(t *testing.T) {
+// TestDeleteUserSessions 验证只删目标用户会话
+func TestDeleteUserSessions(t *testing.T) {
 	s, _ := newTestStore(t)
 	ctx := context.Background()
 	id := mustCreateUser(t, s, "frank")
 	other := mustCreateUser(t, s, "grace")
 
 	for _, h := range []string{"rt-1", "rt-2"} {
-		if err := s.CreateRefreshToken(ctx, id, h, time.Now().Add(time.Hour)); err != nil {
-			t.Fatalf("CreateRefreshToken() 错误: %v", err)
+		if err := s.CreateSession(ctx, id, eid.New(eid.Device), "", h, time.Now().Add(time.Hour)); err != nil {
+			t.Fatalf("CreateSession() 错误: %v", err)
 		}
 	}
-	if err := s.CreateRefreshToken(ctx, other, "rt-other", time.Now().Add(time.Hour)); err != nil {
-		t.Fatalf("CreateRefreshToken() 错误: %v", err)
+	if err := s.CreateSession(ctx, other, eid.New(eid.Device), "", "rt-other", time.Now().Add(time.Hour)); err != nil {
+		t.Fatalf("CreateSession() 错误: %v", err)
 	}
 
-	if err := s.RevokeAllRefreshTokens(ctx, id); err != nil {
-		t.Fatalf("RevokeAllRefreshTokens() 错误: %v", err)
+	if err := DeleteUserSessions(ctx, s.q, id); err != nil {
+		t.Fatalf("DeleteUserSessions() 错误: %v", err)
 	}
 	for _, h := range []string{"rt-1", "rt-2"} {
-		if _, err := s.GetRefreshToken(ctx, h); !errors.Is(err, ErrRefreshNotFound) {
-			t.Errorf("token %s 错误 = %v，期望已吊销", h, err)
+		if _, err := s.GetSessionByTokenHash(ctx, h); !errors.Is(err, ErrSessionNotFound) {
+			t.Errorf("会话 %s 错误 = %v，期望已删除", h, err)
 		}
 	}
-	// 其他用户的 token 不受影响
-	if _, err := s.GetRefreshToken(ctx, "rt-other"); err != nil {
+	// 其他用户的会话不受影响
+	if _, err := s.GetSessionByTokenHash(ctx, "rt-other"); err != nil {
 		t.Errorf("不应影响其他用户: %v", err)
 	}
 }

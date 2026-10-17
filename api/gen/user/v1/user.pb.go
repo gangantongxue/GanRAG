@@ -23,9 +23,9 @@ const (
 
 type User struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	Id            int64                  `protobuf:"varint,1,opt,name=id,proto3" json:"id,omitempty"`                                              // 用户 ID（自增主键）
-	Username      string                 `protobuf:"bytes,2,opt,name=username,proto3" json:"username,omitempty"`                                   // 用户名（唯一）
-	Nickname      string                 `protobuf:"bytes,3,opt,name=nickname,proto3" json:"nickname,omitempty"`                                   // 昵称（首期默认等于用户名）
+	Xid           string                 `protobuf:"bytes,1,opt,name=xid,proto3" json:"xid,omitempty"`                                             // 业务主键 usr_<xid> 全串（对外唯一标识）
+	Email         string                 `protobuf:"bytes,2,opt,name=email,proto3" json:"email,omitempty"`                                         // 登录标识（唯一）
+	Username      string                 `protobuf:"bytes,3,opt,name=username,proto3" json:"username,omitempty"`                                   // 展示名，可重复、可为空
 	Status        int32                  `protobuf:"varint,4,opt,name=status,proto3" json:"status,omitempty"`                                      // 1 正常 0 禁用
 	CreatedAtUnix int64                  `protobuf:"varint,5,opt,name=created_at_unix,json=createdAtUnix,proto3" json:"created_at_unix,omitempty"` // 创建时间（Unix 秒）
 	UpdatedAtUnix int64                  `protobuf:"varint,6,opt,name=updated_at_unix,json=updatedAtUnix,proto3" json:"updated_at_unix,omitempty"` // 更新时间（Unix 秒）
@@ -63,23 +63,23 @@ func (*User) Descriptor() ([]byte, []int) {
 	return file_api_proto_user_v1_user_proto_rawDescGZIP(), []int{0}
 }
 
-func (x *User) GetId() int64 {
+func (x *User) GetXid() string {
 	if x != nil {
-		return x.Id
+		return x.Xid
 	}
-	return 0
+	return ""
+}
+
+func (x *User) GetEmail() string {
+	if x != nil {
+		return x.Email
+	}
+	return ""
 }
 
 func (x *User) GetUsername() string {
 	if x != nil {
 		return x.Username
-	}
-	return ""
-}
-
-func (x *User) GetNickname() string {
-	if x != nil {
-		return x.Nickname
 	}
 	return ""
 }
@@ -196,8 +196,10 @@ func (*SendEmailCodeResponse) Descriptor() ([]byte, []int) {
 
 type RegisterRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	Username      string                 `protobuf:"bytes,1,opt,name=username,proto3" json:"username,omitempty"` // 3-32 字符，字母数字与 _ -
-	Password      string                 `protobuf:"bytes,2,opt,name=password,proto3" json:"password,omitempty"` // 8-64 字符
+	Email         string                 `protobuf:"bytes,1,opt,name=email,proto3" json:"email,omitempty"`       // 邮箱（唯一）
+	Code          string                 `protobuf:"bytes,2,opt,name=code,proto3" json:"code,omitempty"`         // 邮箱验证码（scene=register）
+	Password      string                 `protobuf:"bytes,3,opt,name=password,proto3" json:"password,omitempty"` // 8-64 字符
+	Username      string                 `protobuf:"bytes,4,opt,name=username,proto3" json:"username,omitempty"` // 展示名，可选（≤64 字符）
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -232,9 +234,16 @@ func (*RegisterRequest) Descriptor() ([]byte, []int) {
 	return file_api_proto_user_v1_user_proto_rawDescGZIP(), []int{3}
 }
 
-func (x *RegisterRequest) GetUsername() string {
+func (x *RegisterRequest) GetEmail() string {
 	if x != nil {
-		return x.Username
+		return x.Email
+	}
+	return ""
+}
+
+func (x *RegisterRequest) GetCode() string {
+	if x != nil {
+		return x.Code
 	}
 	return ""
 }
@@ -242,6 +251,13 @@ func (x *RegisterRequest) GetUsername() string {
 func (x *RegisterRequest) GetPassword() string {
 	if x != nil {
 		return x.Password
+	}
+	return ""
+}
+
+func (x *RegisterRequest) GetUsername() string {
+	if x != nil {
+		return x.Username
 	}
 	return ""
 }
@@ -293,7 +309,7 @@ func (x *RegisterResponse) GetUser() *User {
 
 type LoginRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	Username      string                 `protobuf:"bytes,1,opt,name=username,proto3" json:"username,omitempty"`
+	Email         string                 `protobuf:"bytes,1,opt,name=email,proto3" json:"email,omitempty"`
 	Password      string                 `protobuf:"bytes,2,opt,name=password,proto3" json:"password,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -329,9 +345,9 @@ func (*LoginRequest) Descriptor() ([]byte, []int) {
 	return file_api_proto_user_v1_user_proto_rawDescGZIP(), []int{5}
 }
 
-func (x *LoginRequest) GetUsername() string {
+func (x *LoginRequest) GetEmail() string {
 	if x != nil {
-		return x.Username
+		return x.Email
 	}
 	return ""
 }
@@ -533,7 +549,7 @@ func (x *RefreshResponse) GetRefreshExpiresIn() int64 {
 
 type GetUserRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	Id            int64                  `protobuf:"varint,1,opt,name=id,proto3" json:"id,omitempty"`
+	Xid           string                 `protobuf:"bytes,1,opt,name=xid,proto3" json:"xid,omitempty"` // 用户业务主键 usr_<xid> 全串
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -568,11 +584,11 @@ func (*GetUserRequest) Descriptor() ([]byte, []int) {
 	return file_api_proto_user_v1_user_proto_rawDescGZIP(), []int{9}
 }
 
-func (x *GetUserRequest) GetId() int64 {
+func (x *GetUserRequest) GetXid() string {
 	if x != nil {
-		return x.Id
+		return x.Xid
 	}
-	return 0
+	return ""
 }
 
 type GetUserResponse struct {
@@ -621,7 +637,7 @@ func (x *GetUserResponse) GetUser() *User {
 
 type UpdatePasswordRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	UserId        int64                  `protobuf:"varint,1,opt,name=user_id,json=userId,proto3" json:"user_id,omitempty"` // 由 Gateway 从 access token 解析后注入，不信任请求体
+	UserXid       string                 `protobuf:"bytes,1,opt,name=user_xid,json=userXid,proto3" json:"user_xid,omitempty"` // 由 Gateway 从 access token 解析后注入，不信任请求体
 	OldPassword   string                 `protobuf:"bytes,2,opt,name=old_password,json=oldPassword,proto3" json:"old_password,omitempty"`
 	NewPassword   string                 `protobuf:"bytes,3,opt,name=new_password,json=newPassword,proto3" json:"new_password,omitempty"` // 8-64 字符
 	unknownFields protoimpl.UnknownFields
@@ -658,11 +674,11 @@ func (*UpdatePasswordRequest) Descriptor() ([]byte, []int) {
 	return file_api_proto_user_v1_user_proto_rawDescGZIP(), []int{11}
 }
 
-func (x *UpdatePasswordRequest) GetUserId() int64 {
+func (x *UpdatePasswordRequest) GetUserXid() string {
 	if x != nil {
-		return x.UserId
+		return x.UserXid
 	}
-	return 0
+	return ""
 }
 
 func (x *UpdatePasswordRequest) GetOldPassword() string {
@@ -719,25 +735,27 @@ var File_api_proto_user_v1_user_proto protoreflect.FileDescriptor
 
 const file_api_proto_user_v1_user_proto_rawDesc = "" +
 	"\n" +
-	"\x1capi/proto/user/v1/user.proto\x12\auser.v1\"\xb6\x01\n" +
-	"\x04User\x12\x0e\n" +
-	"\x02id\x18\x01 \x01(\x03R\x02id\x12\x1a\n" +
-	"\busername\x18\x02 \x01(\tR\busername\x12\x1a\n" +
-	"\bnickname\x18\x03 \x01(\tR\bnickname\x12\x16\n" +
+	"\x1capi/proto/user/v1/user.proto\x12\auser.v1\"\xb2\x01\n" +
+	"\x04User\x12\x10\n" +
+	"\x03xid\x18\x01 \x01(\tR\x03xid\x12\x14\n" +
+	"\x05email\x18\x02 \x01(\tR\x05email\x12\x1a\n" +
+	"\busername\x18\x03 \x01(\tR\busername\x12\x16\n" +
 	"\x06status\x18\x04 \x01(\x05R\x06status\x12&\n" +
 	"\x0fcreated_at_unix\x18\x05 \x01(\x03R\rcreatedAtUnix\x12&\n" +
 	"\x0fupdated_at_unix\x18\x06 \x01(\x03R\rupdatedAtUnix\"B\n" +
 	"\x14SendEmailCodeRequest\x12\x14\n" +
 	"\x05email\x18\x01 \x01(\tR\x05email\x12\x14\n" +
 	"\x05scene\x18\x02 \x01(\tR\x05scene\"\x17\n" +
-	"\x15SendEmailCodeResponse\"I\n" +
-	"\x0fRegisterRequest\x12\x1a\n" +
-	"\busername\x18\x01 \x01(\tR\busername\x12\x1a\n" +
-	"\bpassword\x18\x02 \x01(\tR\bpassword\"5\n" +
+	"\x15SendEmailCodeResponse\"s\n" +
+	"\x0fRegisterRequest\x12\x14\n" +
+	"\x05email\x18\x01 \x01(\tR\x05email\x12\x12\n" +
+	"\x04code\x18\x02 \x01(\tR\x04code\x12\x1a\n" +
+	"\bpassword\x18\x03 \x01(\tR\bpassword\x12\x1a\n" +
+	"\busername\x18\x04 \x01(\tR\busername\"5\n" +
 	"\x10RegisterResponse\x12!\n" +
-	"\x04user\x18\x01 \x01(\v2\r.user.v1.UserR\x04user\"F\n" +
-	"\fLoginRequest\x12\x1a\n" +
-	"\busername\x18\x01 \x01(\tR\busername\x12\x1a\n" +
+	"\x04user\x18\x01 \x01(\v2\r.user.v1.UserR\x04user\"@\n" +
+	"\fLoginRequest\x12\x14\n" +
+	"\x05email\x18\x01 \x01(\tR\x05email\x12\x1a\n" +
 	"\bpassword\x18\x02 \x01(\tR\bpassword\"\xd4\x01\n" +
 	"\rLoginResponse\x12!\n" +
 	"\x04user\x18\x01 \x01(\v2\r.user.v1.UserR\x04user\x12!\n" +
@@ -751,13 +769,13 @@ const file_api_proto_user_v1_user_proto_rawDesc = "" +
 	"\faccess_token\x18\x01 \x01(\tR\vaccessToken\x12#\n" +
 	"\rrefresh_token\x18\x02 \x01(\tR\frefreshToken\x12*\n" +
 	"\x11access_expires_in\x18\x03 \x01(\x03R\x0faccessExpiresIn\x12,\n" +
-	"\x12refresh_expires_in\x18\x04 \x01(\x03R\x10refreshExpiresIn\" \n" +
-	"\x0eGetUserRequest\x12\x0e\n" +
-	"\x02id\x18\x01 \x01(\x03R\x02id\"4\n" +
+	"\x12refresh_expires_in\x18\x04 \x01(\x03R\x10refreshExpiresIn\"\"\n" +
+	"\x0eGetUserRequest\x12\x10\n" +
+	"\x03xid\x18\x01 \x01(\tR\x03xid\"4\n" +
 	"\x0fGetUserResponse\x12!\n" +
-	"\x04user\x18\x01 \x01(\v2\r.user.v1.UserR\x04user\"v\n" +
-	"\x15UpdatePasswordRequest\x12\x17\n" +
-	"\auser_id\x18\x01 \x01(\x03R\x06userId\x12!\n" +
+	"\x04user\x18\x01 \x01(\v2\r.user.v1.UserR\x04user\"x\n" +
+	"\x15UpdatePasswordRequest\x12\x19\n" +
+	"\buser_xid\x18\x01 \x01(\tR\auserXid\x12!\n" +
 	"\fold_password\x18\x02 \x01(\tR\voldPassword\x12!\n" +
 	"\fnew_password\x18\x03 \x01(\tR\vnewPassword\"\x18\n" +
 	"\x16UpdatePasswordResponse2\xa5\x03\n" +
