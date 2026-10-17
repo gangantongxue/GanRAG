@@ -45,7 +45,7 @@ type chatMessage struct {
 
 	ALL       field.Asterisk
 	ID        field.Int64
-	Xid       field.String
+	Xid       field.String // 业务主键，形如 msg_<xid>（pkg/eid），对外标识
 	SessionID field.Int64
 	Role      field.Int32
 	Agent     field.String

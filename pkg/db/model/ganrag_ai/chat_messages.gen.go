@@ -13,7 +13,7 @@ const TableNameChatMessage = "chat_messages"
 // ChatMessage mapped from table <chat_messages>
 type ChatMessage struct {
 	ID        int64     `gorm:"column:id;primaryKey;autoIncrement:true" json:"id"`
-	Xid       string    `gorm:"column:xid;not null" json:"xid"`
+	Xid       string    `gorm:"column:xid;not null;comment:业务主键，形如 msg_<xid>（pkg/eid），对外标识" json:"xid"` // 业务主键，形如 msg_<xid>（pkg/eid），对外标识
 	SessionID int64     `gorm:"column:session_id;not null" json:"session_id"`
 	Role      int32     `gorm:"column:role;not null" json:"role"`
 	Agent     string    `gorm:"column:agent;not null" json:"agent"`

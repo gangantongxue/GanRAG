@@ -45,7 +45,7 @@ ganrag_user                          ganrag_repository
                  │                         │ kb_id / dir_id │
                  │                         │ type / title   │
                  │                         │ content_key ───┼─▶ Garage (S3)
-                 │                         │ created_by     │   key: o/<object_xid>
+                 │                         │ created_by     │   key: o/<obj_xid>
                  │                         └───────┬────────┘
                  │                                 │
                  │                         ┌───────┴──────────┐
@@ -67,9 +67,9 @@ ganrag_ai
 
 | 决策点 | 结论 | 原因 |
 |--------|------|------|
-| 文章内容存储 | 正文与转换结果一律存 **Garage（S3）**（`articles.content_key`，对象 key 统一 `o/<object_xid>`），MySQL 只存元数据与对象 key | 内容是大对象不占 MySQL 行；重建索引 / 换模型直接读对象存储，不重跑 markitdown |
+| 文章内容存储 | 正文与转换结果一律存 **Garage（S3）**（`articles.content_key`，对象 key 统一 `o/<obj_xid>`），MySQL 只存元数据与对象 key | 内容是大对象不占 MySQL 行；重建索引 / 换模型直接读对象存储，不重跑 markitdown |
 | 引用方式 | 图片与互链以 **Markdown 链接**形式存在于正文（稳定 URL 指向 xid），**不建关系表** | 关联即正文内容本身；URL 按 xid，文章移动 / 改名不打断引用；断链渲染时标记 |
-| 业务主键 | 对外展示实体一律加 `xid CHAR(20)`（XID），对外接口/URL/前端只用 xid；逻辑引用存自增 id | 自增 id 不出服务，防遍历枚举；见根 AGENTS.md「业务主键（XID）规范」 |
+| 业务主键 | 对外展示实体一律加 `xid VARCHAR(32)`（`pkg/eid` 生成 `<前缀>_<xid>` 全串，前缀按实体类型），对外接口/URL/前端只用 xid 全串；逻辑引用存自增 id | 自增 id 不出服务，防遍历枚举；见根 AGENTS.md「业务主键（XID）规范」 |
 | 改写时机 | md 保存时解析相对路径 → 绑定附件/目标文章 → 改写为稳定 URL | 渲染端零解析成本；解析失败的链接保留原文，渲染时标记失效 |
 | 根节点表示 | `parent_id` / `dir_id` / `kb_id`（会话）用 **0 表示根**，不用 NULL | MySQL 唯一索引对 NULL 不去重，0 值让 `UNIQUE(kb_id, parent_id, name)` 对根目录同样生效 |
 | 标题约束 | 文章标题**不设唯一** | 引用靠 xid 不靠标题；同目录同名仅是编辑体验问题，由应用层提示 |
@@ -92,14 +92,14 @@ ganrag_ai
 
 ### ganrag_repository（Repository 服务）
 
-> **建表迁移已交付**（2026-10-15 迁移基线重写，`pkg/db/migrations/ganrag_repository/0001-0005`）；服务实现见 [todo.md](todo.md) 「Repository 服务实现」。统一约定补充：对外实体带 `xid CHAR(20)` 业务主键（见根 AGENTS.md「业务主键（XID）规范」）；完整结构参考见 [database.md](database.md)。
+> **建表迁移已交付**（2026-10-15 迁移基线重写，`pkg/db/migrations/ganrag_repository/0001-0005`）；服务实现见 [todo.md](todo.md) 「Repository 服务实现」。统一约定补充：对外实体带 `xid VARCHAR(32)` 业务主键（`<前缀>_<xid>` 全串，`pkg/eid`）（见根 AGENTS.md「业务主键（XID）规范」）；完整结构参考见 [database.md](database.md)。
 
 #### knowledge_bases 知识库
 
 ```sql
 CREATE TABLE knowledge_bases (
   id            BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
-  xid           CHAR(20)      NOT NULL,             -- XID 业务主键，对外标识
+  xid           VARCHAR(32)      NOT NULL,             -- 业务主键 <前缀>_<xid>（pkg/eid），对外标识
   owner_id      BIGINT UNSIGNED NOT NULL,           -- 逻辑引用 users.id
   name          VARCHAR(100)  NOT NULL,
   description   VARCHAR(500)  NOT NULL DEFAULT '',
@@ -123,7 +123,7 @@ CREATE TABLE knowledge_bases (
 ```sql
 CREATE TABLE directories (
   id         BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
-  xid        CHAR(20)      NOT NULL,                -- XID 业务主键，对外标识
+  xid        VARCHAR(32)      NOT NULL,                -- 业务主键 <前缀>_<xid>（pkg/eid），对外标识
   kb_id      BIGINT UNSIGNED NOT NULL,              -- 逻辑引用 knowledge_bases.id
   parent_id  BIGINT UNSIGNED NOT NULL DEFAULT 0,    -- 0 = 根，逻辑引用 directories.id
   name       VARCHAR(100)    NOT NULL,
@@ -143,12 +143,12 @@ CREATE TABLE directories (
 ```sql
 CREATE TABLE articles (
   id          BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
-  xid         CHAR(20)      NOT NULL,               -- XID 业务主键，对外标识
+  xid         VARCHAR(32)      NOT NULL,               -- 业务主键 <前缀>_<xid>（pkg/eid），对外标识
   kb_id       BIGINT UNSIGNED NOT NULL,             -- 逻辑引用 knowledge_bases.id
   dir_id      BIGINT UNSIGNED NOT NULL DEFAULT 0,   -- 0 = 根，逻辑引用 directories.id
   type        TINYINT         NOT NULL,             -- 1 md 2 txt 3 pdf 4 docx 5 html（原始格式）
   title       VARCHAR(200)    NOT NULL,
-  content_key VARCHAR(500)    NOT NULL,             -- 正文 md 对象 key（o/<object_xid>，MySQL 不存内容）
+  content_key VARCHAR(500)    NOT NULL,             -- 正文 md 对象 key（o/<obj_xid>，MySQL 不存内容）
   created_by  BIGINT UNSIGNED NOT NULL,             -- 逻辑引用 users.id
   created_at  DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at  DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -168,11 +168,11 @@ CREATE TABLE articles (
 ```sql
 CREATE TABLE attachments (
   id            BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
-  xid           CHAR(20)      NOT NULL,             -- XID 业务主键，对外标识（稳定 URL）
+  xid           VARCHAR(32)      NOT NULL,             -- 业务主键 <前缀>_<xid>（pkg/eid），对外标识（稳定 URL）
   kb_id         BIGINT UNSIGNED NOT NULL,           -- 逻辑引用 knowledge_bases.id
   article_id    BIGINT UNSIGNED NOT NULL,           -- 所属文章，逻辑引用 articles.id
   kind          TINYINT         NOT NULL,           -- 1 源文件（pdf/docx/html 原文，固定绑定） 2 内嵌图片/附件（保存时按正文链接重建）
-  file_key      VARCHAR(500)    NOT NULL,           -- 对象 key（o/<object_xid>，统一单桶）
+  file_key      VARCHAR(500)    NOT NULL,           -- 对象 key（o/<obj_xid>，统一单桶）
   relative_path VARCHAR(500)    NOT NULL,           -- 规范化相对路径（如 assets/logo.png），供渲染期解析
   original_name VARCHAR(255)    NOT NULL,           -- 原始文件名（展示用）
   content_type  VARCHAR(100)    NOT NULL,           -- image/png 等
@@ -188,7 +188,7 @@ CREATE TABLE attachments (
 );
 ```
 
-- **对象存储**：Garage（S3）单共享桶 + 统一对象 key `o/<object_xid>`（不按知识库分桶、不设图片专属目录）；Repository 是唯一直接访问方，Gateway 验签 + 路由后由 Repository 校验权限并签发 Presigned URL（302）
+- **对象存储**：Garage（S3）单共享桶 + 统一对象 key `o/<obj_xid>`（不按知识库分桶、不设图片专属目录）；Repository 是唯一直接访问方，Gateway 验签 + 路由后由 Repository 校验权限并签发 Presigned URL（302）
 - 稳定 URL 形如 `/api/v1/attachments/<xid>`，经 gateway 鉴权（公开库可见、私有库校验成员）后转发
 - 附件归单篇文章独占，不跨文章共享（文章复制需复制附件行与对象）；kind=2 保存时按正文相对路径引用全量重建、孤儿即时清理；kind=1 随文章删除清理；`relative_path` 只存规范化相对路径（禁绝对路径、禁 `..` 越权）
 
@@ -218,7 +218,7 @@ CREATE TABLE kb_user_relations (
 ```sql
 CREATE TABLE users (
   id            BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
-  xid           CHAR(20)      NOT NULL,             -- XID 业务主键，对外标识
+  xid           VARCHAR(32)      NOT NULL,             -- 业务主键 <前缀>_<xid>（pkg/eid），对外标识
   email         VARCHAR(254) NOT NULL,             -- 登录标识（登录/找回密码）
   username      VARCHAR(64)  NOT NULL DEFAULT '',  -- 展示名，可重复、可不填
   password_hash VARCHAR(100) NOT NULL,             -- bcrypt 结果
@@ -235,7 +235,7 @@ CREATE TABLE users (
 ```sql
 CREATE TABLE sessions (
   id             BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
-  xid            CHAR(20)      NOT NULL,             -- XID 业务主键，对外标识（设备管理接口用）
+  xid            VARCHAR(32)      NOT NULL,             -- 业务主键 <前缀>_<xid>（pkg/eid），对外标识（设备管理接口用）
   user_id        BIGINT UNSIGNED NOT NULL,          -- 逻辑引用 users.id
   device_id      VARCHAR(64)  NOT NULL,             -- 设备码（服务端生成/核对，见「设备标识（device_id）口径」）
   device_info    VARCHAR(255) NOT NULL DEFAULT '',  -- 设备信息（UA/平台摘要，设备列表展示）
@@ -264,7 +264,7 @@ CREATE TABLE sessions (
 |------|------|
 | 生成方 | 服务端为权威生成方：登录请求携带合法 `device_id`（1-64 位 `[A-Za-z0-9_-]`）则沿用，否则服务端生成 |
 | 取值优先级 | 请求体 `device_id`（前端 localStorage）> Gateway `did` cookie > 服务端生成 |
-| 生成器 | `github.com/rs/xid`（20 字符，与 `sessions.xid` 同源，后续统一收进 `pkg/xid`） |
+| 生成器 | `pkg/eid` 生成 `dev_<xid>`（24 字符，与业务主键同源） |
 | Gateway cookie | 登录成功后 `Set-Cookie: did=<device_id>; HttpOnly; SameSite=Lax; Path=/; Max-Age=31536000`（生产加 `Secure`），每次登录续期；登录请求无 body `device_id` 时读 cookie 填入 gRPC 请求 |
 | 回填同步 | 登录响应返回 `device_id`，前端写 localStorage，下次登录放请求体；两处不一致以请求体为准，cookie 覆盖为同值（收敛到单一值） |
 | 失效语义 | cookie 与 localStorage 全清 = 新设备行（接受，无解）；不做疑似同设备归并（YAGNI） |
@@ -303,7 +303,7 @@ CREATE TABLE user_follows (                          -- 0003_user_follows
 ```sql
 CREATE TABLE chat_sessions (
   id              BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
-  xid             CHAR(20)      NOT NULL,             -- XID 业务主键，对外标识（兼 useChat chatId）
+  xid             VARCHAR(32)      NOT NULL,             -- 业务主键 <前缀>_<xid>（pkg/eid），对外标识（兼 useChat chatId）
   user_id         BIGINT UNSIGNED NOT NULL,            -- 逻辑引用 users.id
   kb_id           BIGINT UNSIGNED NOT NULL DEFAULT 0,  -- 0 = 全局，否则绑定单个知识库
   agent           VARCHAR(32)     NOT NULL DEFAULT '', -- 当前智能体 id（粘性状态，P1.5 多智能体路由用）
@@ -327,7 +327,7 @@ CREATE TABLE chat_sessions (
 ```sql
 CREATE TABLE chat_messages (
   id         BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
-  xid        CHAR(20)      NOT NULL,               -- XID 业务主键，对外标识（兼 UIMessage.id）
+  xid        VARCHAR(32)      NOT NULL,               -- 业务主键 <前缀>_<xid>（pkg/eid），对外标识（兼 UIMessage.id）
   session_id BIGINT UNSIGNED NOT NULL,             -- 逻辑引用 chat_sessions.id
   role       TINYINT         NOT NULL,             -- 1 user 2 assistant
   agent      VARCHAR(32)     NOT NULL DEFAULT '',  -- 产生该消息的智能体 id，user 消息为空

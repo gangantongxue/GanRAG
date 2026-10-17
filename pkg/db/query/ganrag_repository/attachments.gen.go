@@ -51,7 +51,7 @@ type attachment struct {
 
 	ALL          field.Asterisk
 	ID           field.Int64
-	Xid          field.String
+	Xid          field.String // 业务主键，形如 att_<xid>（pkg/eid），对外标识（稳定 URL）
 	KbID         field.Int64
 	ArticleID    field.Int64
 	Kind         field.Int32

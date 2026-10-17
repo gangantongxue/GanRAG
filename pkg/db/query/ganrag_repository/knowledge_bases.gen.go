@@ -48,7 +48,7 @@ type knowledgeBasis struct {
 
 	ALL          field.Asterisk
 	ID           field.Int64
-	Xid          field.String
+	Xid          field.String // 业务主键，形如 kb_<xid>（pkg/eid），对外标识
 	OwnerID      field.Int64
 	Name         field.String
 	Description  field.String

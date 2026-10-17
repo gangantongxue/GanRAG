@@ -47,12 +47,12 @@ Garage（S3）       返回对象内容
 - 若桶匿名公开，任何拿到对象地址的人可绕过 Gateway，私有知识库即泄露。因此只要系统有私有知识库，Garage 桶就不能开匿名读
 - S3 Access Key / Secret Key **只配置在 Repository**，通过环境变量注入，不入库、不入前端、不入 Gateway
 
-### 对象 Key：统一 `o/<object_xid>`，不再分目录
+### 对象 Key：统一 `o/<obj_xid>`，不再分目录
 
 不再使用图片专属目录、附件目录、按知识库分桶。所有对象统一：
 
 ```text
-o/<object_xid>
+o/<obj_xid>
 ```
 
 对象类型、原始文件名、所属文章、所属知识库全部由 MySQL 元数据管理：

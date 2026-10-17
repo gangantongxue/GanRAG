@@ -45,7 +45,7 @@ type directory struct {
 
 	ALL       field.Asterisk
 	ID        field.Int64
-	Xid       field.String
+	Xid       field.String // 业务主键，形如 dir_<xid>（pkg/eid），对外标识
 	KbID      field.Int64
 	ParentID  field.Int64
 	Name      field.String

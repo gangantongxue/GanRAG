@@ -271,7 +271,7 @@ CREATE TABLE sessions (
 
 - **登录 / 刷新**：单条唯一索引查询，无慢路径
 - **登录建会话**：按 `(user_id, device_id)` upsert `sessions` 行（同设备重登覆盖旧会话，`token_hash` 换新、`revoked_at` 清空）
-- **设备 ID 下发（方案 A）**：`device_id` 服务端生成/核对（取值优先级：请求体 > Gateway `did` cookie > 服务端生成 xid）；Gateway 登录成功后 `Set-Cookie: did=<device_id>`（HttpOnly，Max-Age 1 年，每次登录续期），登录响应 `device_id` 回填供前端存 localStorage；完整口径见 [docs/data-model.md](../../../docs/data-model.md)「设备标识（device_id）口径」
+- **设备 ID 下发（方案 A）**：`device_id` 服务端生成/核对（取值优先级：请求体 > Gateway `did` cookie > 服务端生成 `dev_<xid>`（`pkg/eid`））；Gateway 登录成功后 `Set-Cookie: did=<device_id>`（HttpOnly，Max-Age 1 年，每次登录续期），登录响应 `device_id` 回填供前端存 localStorage；完整口径见 [docs/data-model.md](../../../docs/data-model.md)「设备标识（device_id）口径」
 - **refresh 轮换**：原地更新 `token_hash` 与 `last_active_at`；**不做重用检测**，旧 token 复用按无效拒绝（`ErrRefreshNotFound` → `Unauthenticated`）
 - **过期清理**：登录 / 刷新时顺带删除该用户已过期 `sessions` 行（惰性清理，无需定时任务）
 - **改密 / 找回密码**：单事务内更新 `users.password_hash` + 删除该用户全部 `sessions` 行

@@ -49,7 +49,7 @@ type chatSession struct {
 
 	ALL           field.Asterisk
 	ID            field.Int64
-	Xid           field.String
+	Xid           field.String // 业务主键，形如 chs_<xid>（pkg/eid），对外标识
 	UserID        field.Int64
 	KbID          field.Int64
 	Agent         field.String

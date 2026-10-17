@@ -13,7 +13,7 @@ const TableNameAttachment = "attachments"
 // Attachment mapped from table <attachments>
 type Attachment struct {
 	ID           int64     `gorm:"column:id;primaryKey;autoIncrement:true" json:"id"`
-	Xid          string    `gorm:"column:xid;not null" json:"xid"`
+	Xid          string    `gorm:"column:xid;not null;comment:业务主键，形如 att_<xid>（pkg/eid），对外标识（稳定 URL）" json:"xid"` // 业务主键，形如 att_<xid>（pkg/eid），对外标识（稳定 URL）
 	KbID         int64     `gorm:"column:kb_id;not null" json:"kb_id"`
 	ArticleID    int64     `gorm:"column:article_id;not null" json:"article_id"`
 	Kind         int32     `gorm:"column:kind;not null" json:"kind"`

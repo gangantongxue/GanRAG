@@ -13,7 +13,7 @@ const TableNameDirectory = "directories"
 // Directory mapped from table <directories>
 type Directory struct {
 	ID        int64     `gorm:"column:id;primaryKey;autoIncrement:true" json:"id"`
-	Xid       string    `gorm:"column:xid;not null" json:"xid"`
+	Xid       string    `gorm:"column:xid;not null;comment:业务主键，形如 dir_<xid>（pkg/eid），对外标识" json:"xid"` // 业务主键，形如 dir_<xid>（pkg/eid），对外标识
 	KbID      int64     `gorm:"column:kb_id;not null" json:"kb_id"`
 	ParentID  int64     `gorm:"column:parent_id;not null" json:"parent_id"`
 	Name      string    `gorm:"column:name;not null" json:"name"`

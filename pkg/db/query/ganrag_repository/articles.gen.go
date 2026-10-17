@@ -48,7 +48,7 @@ type article struct {
 
 	ALL        field.Asterisk
 	ID         field.Int64
-	Xid        field.String
+	Xid        field.String // 业务主键，形如 art_<xid>（pkg/eid），对外标识
 	KbID       field.Int64
 	DirID      field.Int64
 	Type       field.Int32

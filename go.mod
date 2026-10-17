@@ -10,6 +10,7 @@ require (
 	github.com/golang-migrate/migrate/v4 v4.20.1
 	github.com/joho/godotenv v1.5.1
 	github.com/philippgille/chromem-go v0.7.0
+	github.com/rs/xid v1.6.0
 	github.com/spf13/viper v1.21.0
 	golang.org/x/crypto v0.57.0
 	golang.org/x/time v0.16.0

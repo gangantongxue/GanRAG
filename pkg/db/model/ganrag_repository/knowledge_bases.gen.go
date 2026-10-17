@@ -13,7 +13,7 @@ const TableNameKnowledgeBasis = "knowledge_bases"
 // KnowledgeBasis mapped from table <knowledge_bases>
 type KnowledgeBasis struct {
 	ID           int64     `gorm:"column:id;primaryKey;autoIncrement:true" json:"id"`
-	Xid          string    `gorm:"column:xid;not null" json:"xid"`
+	Xid          string    `gorm:"column:xid;not null;comment:业务主键，形如 kb_<xid>（pkg/eid），对外标识" json:"xid"` // 业务主键，形如 kb_<xid>（pkg/eid），对外标识
 	OwnerID      int64     `gorm:"column:owner_id;not null" json:"owner_id"`
 	Name         string    `gorm:"column:name;not null" json:"name"`
 	Description  string    `gorm:"column:description;not null" json:"description"`

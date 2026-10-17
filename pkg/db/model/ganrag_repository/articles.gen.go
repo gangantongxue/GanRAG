@@ -13,7 +13,7 @@ const TableNameArticle = "articles"
 // Article mapped from table <articles>
 type Article struct {
 	ID         int64     `gorm:"column:id;primaryKey;autoIncrement:true" json:"id"`
-	Xid        string    `gorm:"column:xid;not null" json:"xid"`
+	Xid        string    `gorm:"column:xid;not null;comment:业务主键，形如 art_<xid>（pkg/eid），对外标识" json:"xid"` // 业务主键，形如 art_<xid>（pkg/eid），对外标识
 	KbID       int64     `gorm:"column:kb_id;not null" json:"kb_id"`
 	DirID      int64     `gorm:"column:dir_id;not null" json:"dir_id"`
 	Type       int32     `gorm:"column:type;not null" json:"type"`

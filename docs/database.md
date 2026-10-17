@@ -15,8 +15,8 @@
 - 主键：`BIGINT UNSIGNED NOT NULL AUTO_INCREMENT`；时间戳 `DATETIME`，`created_at` / `updated_at` 自动维护
 - 表尾：`ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`
 - **禁止物理外键**：表间关联一律逻辑引用（只存目标自增 id，注释标明引用目标），完整性与级联清理由应用层负责
-- **XID 业务主键**：对外展示实体带 `xid CHAR(20)`（`github.com/rs/xid` 生成）+ UNIQUE；对外接口/URL/前端只用 xid，自增 id 不出服务；**逻辑引用一律存自增 id，不存 xid**
-- **内容存储口径**：文章/文档大对象不入 MySQL（存 Garage 对象存储，只存 key，统一 `o/<object_xid>`）；聊天消息、思考、工具结果、模型上下文等交易型短文本入 MySQL（LONGTEXT / JSON）
+- **业务主键**：对外展示实体带 `xid VARCHAR(32)`（`pkg/eid` 生成 `<前缀>_<xid>` 全串，前缀按实体类型：`usr_`/`ses_`/`kb_`/`dir_`/`art_`/`att_`/`chs_`/`msg_`）+ UNIQUE；对外接口/URL/前端只用 xid 全串，自增 id 不出服务；**逻辑引用一律存自增 id，不存 xid**
+- **内容存储口径**：文章/文档大对象不入 MySQL（存 Garage 对象存储，只存 key，统一 `o/<obj_xid>`）；聊天消息、思考、工具结果、模型上下文等交易型短文本入 MySQL（LONGTEXT / JSON）
 
 ---
 
@@ -27,7 +27,7 @@
 ```sql
 CREATE TABLE users (
   id            BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
-  xid           CHAR(20)      NOT NULL,             -- XID 业务主键，对外标识
+  xid           VARCHAR(32)      NOT NULL,             -- 业务主键 <前缀>_<xid>（pkg/eid），对外标识
   email         VARCHAR(254) NOT NULL,              -- 登录标识（登录/找回密码）
   username      VARCHAR(64)  NOT NULL DEFAULT '',   -- 展示名，可重复、可不填
   password_hash VARCHAR(100) NOT NULL,              -- bcrypt 结果
@@ -43,7 +43,7 @@ CREATE TABLE users (
 | 字段 | 类型 | 说明 |
 |------|------|------|
 | id | BIGINT UNSIGNED | 自增主键，仅内部与逻辑引用使用 |
-| xid | CHAR(20) | 对外业务主键（XID） |
+| xid | VARCHAR(32) | 对外业务主键（<前缀>_<xid>，pkg/eid） |
 | email | VARCHAR(254) | 登录标识，唯一；注册/找回密码走邮箱验证码 |
 | username | VARCHAR(64) | 展示名，可重复、可不填，无唯一约束 |
 | password_hash | VARCHAR(100) | bcrypt（实际 60 字符，留余量） |
@@ -61,7 +61,7 @@ CREATE TABLE users (
 ```sql
 CREATE TABLE sessions (
   id             BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
-  xid            CHAR(20)      NOT NULL,             -- XID 业务主键，对外标识（设备管理接口用）
+  xid            VARCHAR(32)      NOT NULL,             -- 业务主键 <前缀>_<xid>（pkg/eid），对外标识（设备管理接口用）
   user_id        BIGINT UNSIGNED NOT NULL,           -- 逻辑引用 users.id
   device_id      VARCHAR(64)  NOT NULL,              -- 设备码（服务端生成/核对，见 data-model.md「设备标识（device_id）口径」）
   device_info    VARCHAR(255) NOT NULL DEFAULT '',   -- 设备信息（UA/平台摘要，设备列表展示）
@@ -81,7 +81,7 @@ CREATE TABLE sessions (
 | 字段 | 类型 | 说明 |
 |------|------|------|
 | id | BIGINT UNSIGNED | 自增主键，仅内部使用 |
-| xid | CHAR(20) | 对外业务主键（XID），设备管理接口使用 |
+| xid | VARCHAR(32) | 对外业务主键（<前缀>_<xid>，pkg/eid），设备管理接口使用 |
 | user_id | BIGINT UNSIGNED | 逻辑引用 users.id |
 | device_id | VARCHAR(64) | 设备码，服务端生成/核对（口径见 [data-model.md](data-model.md)「设备标识（device_id）口径」） |
 | device_info | VARCHAR(255) | 设备信息（UA/平台摘要），列表展示 |
@@ -141,7 +141,7 @@ CREATE TABLE user_follows (
 ```sql
 CREATE TABLE knowledge_bases (
   id            BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
-  xid           CHAR(20)      NOT NULL,
+  xid           VARCHAR(32)      NOT NULL,
   owner_id      BIGINT UNSIGNED NOT NULL,           -- 逻辑引用 users.id
   name          VARCHAR(100)  NOT NULL,
   description   VARCHAR(500)  NOT NULL DEFAULT '',
@@ -161,7 +161,7 @@ CREATE TABLE knowledge_bases (
 | 字段 | 类型 | 说明 |
 |------|------|------|
 | id | BIGINT UNSIGNED | 自增主键，仅内部与逻辑引用使用 |
-| xid | CHAR(20) | 对外业务主键（XID） |
+| xid | VARCHAR(32) | 对外业务主键（<前缀>_<xid>，pkg/eid） |
 | owner_id | BIGINT UNSIGNED | 库主，逻辑引用 users.id |
 | name | VARCHAR(100) | 库名，同一 owner 下唯一 |
 | description | VARCHAR(500) | 描述，默认空串 |
@@ -182,7 +182,7 @@ CREATE TABLE knowledge_bases (
 ```sql
 CREATE TABLE directories (
   id         BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
-  xid        CHAR(20)      NOT NULL,
+  xid        VARCHAR(32)      NOT NULL,
   kb_id      BIGINT UNSIGNED NOT NULL,              -- 逻辑引用 knowledge_bases.id
   parent_id  BIGINT UNSIGNED NOT NULL DEFAULT 0,    -- 0 = 根，逻辑引用 directories.id
   name       VARCHAR(100)    NOT NULL,
@@ -198,7 +198,7 @@ CREATE TABLE directories (
 | 字段 | 类型 | 说明 |
 |------|------|------|
 | id | BIGINT UNSIGNED | 自增主键，仅内部与逻辑引用使用 |
-| xid | CHAR(20) | 对外业务主键（XID），前端目录树使用 |
+| xid | VARCHAR(32) | 对外业务主键（<前缀>_<xid>，pkg/eid），前端目录树使用 |
 | kb_id | BIGINT UNSIGNED | 所属知识库，逻辑引用 knowledge_bases.id |
 | parent_id | BIGINT UNSIGNED | 父目录，**0 表示根**（不用 NULL，保证唯一约束对根生效） |
 | name | VARCHAR(100) | 目录名，同一父目录下唯一（含根） |
@@ -218,12 +218,12 @@ CREATE TABLE directories (
 ```sql
 CREATE TABLE articles (
   id          BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
-  xid         CHAR(20)      NOT NULL,
+  xid         VARCHAR(32)      NOT NULL,
   kb_id       BIGINT UNSIGNED NOT NULL,             -- 逻辑引用 knowledge_bases.id
   dir_id      BIGINT UNSIGNED NOT NULL DEFAULT 0,   -- 0 = 根，逻辑引用 directories.id
   type        TINYINT         NOT NULL,             -- 1 md 2 txt 3 pdf 4 docx 5 html（原始格式）
   title       VARCHAR(200)    NOT NULL,
-  content_key VARCHAR(500)    NOT NULL,             -- 正文 md 对象 key（o/<object_xid>，MySQL 不存内容）
+  content_key VARCHAR(500)    NOT NULL,             -- 正文 md 对象 key（o/<obj_xid>，MySQL 不存内容）
   created_by  BIGINT UNSIGNED NOT NULL,             -- 逻辑引用 users.id
   created_at  DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at  DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -237,12 +237,12 @@ CREATE TABLE articles (
 | 字段 | 类型 | 说明 |
 |------|------|------|
 | id | BIGINT UNSIGNED | 自增主键，仅内部与逻辑引用使用 |
-| xid | CHAR(20) | 对外业务主键（XID） |
+| xid | VARCHAR(32) | 对外业务主键（<前缀>_<xid>，pkg/eid） |
 | kb_id | BIGINT UNSIGNED | 所属知识库，逻辑引用 knowledge_bases.id |
 | dir_id | BIGINT UNSIGNED | 所属目录，0 表示根 |
 | type | TINYINT | 原始格式：1 md / 2 txt / 3 pdf / 4 docx / 5 html |
 | title | VARCHAR(200) | 标题，不设唯一（引用靠 xid 不靠标题） |
-| content_key | VARCHAR(500) | 正文 md 对象 key（统一 `o/<object_xid>`） |
+| content_key | VARCHAR(500) | 正文 md 对象 key（统一 `o/<obj_xid>`） |
 | created_by | BIGINT UNSIGNED | 创建者，逻辑引用 users.id |
 | created_at / updated_at | DATETIME | 自动维护 |
 
@@ -269,11 +269,11 @@ CREATE TABLE articles (
 ```sql
 CREATE TABLE attachments (
   id            BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
-  xid           CHAR(20)      NOT NULL,
+  xid           VARCHAR(32)      NOT NULL,
   kb_id         BIGINT UNSIGNED NOT NULL,           -- 逻辑引用 knowledge_bases.id
   article_id    BIGINT UNSIGNED NOT NULL,           -- 所属文章，逻辑引用 articles.id
   kind          TINYINT         NOT NULL,           -- 1 源文件 2 内嵌图片/附件
-  file_key      VARCHAR(500)    NOT NULL,           -- 对象 key（o/<object_xid>，统一单桶）
+  file_key      VARCHAR(500)    NOT NULL,           -- 对象 key（o/<obj_xid>，统一单桶）
   relative_path VARCHAR(500)    NOT NULL,           -- 规范化相对路径（如 assets/logo.png）
   original_name VARCHAR(255)    NOT NULL,
   content_type  VARCHAR(100)    NOT NULL,
@@ -292,11 +292,11 @@ CREATE TABLE attachments (
 | 字段 | 类型 | 说明 |
 |------|------|------|
 | id | BIGINT UNSIGNED | 自增主键，仅内部使用 |
-| xid | CHAR(20) | 对外业务主键（XID），稳定 URL `/api/v1/attachments/<xid>` |
+| xid | VARCHAR(32) | 对外业务主键（<前缀>_<xid>，pkg/eid），稳定 URL `/api/v1/attachments/<xid>` |
 | kb_id | BIGINT UNSIGNED | 所属知识库，逻辑引用 knowledge_bases.id |
 | article_id | BIGINT UNSIGNED | 所属文章（源文件 1:1，内嵌图片 1:N） |
 | kind | TINYINT | 1 源文件：上传时建立、固定绑定、随文章删除；2 内嵌图片/附件：保存文章时按正文链接全量重建、孤儿即时清理 |
-| file_key | VARCHAR(500) | Garage 对象 key，统一 `o/<object_xid>` |
+| file_key | VARCHAR(500) | Garage 对象 key，统一 `o/<obj_xid>` |
 | relative_path | VARCHAR(500) | 规范化 Markdown 相对路径，(article_id, relative_path) 唯一 |
 | original_name | VARCHAR(255) | 原始文件名，展示用 |
 | content_type | VARCHAR(100) | MIME 类型 |
@@ -354,7 +354,7 @@ CREATE TABLE kb_user_relations (
 ```sql
 CREATE TABLE chat_sessions (
   id              BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
-  xid             CHAR(20)      NOT NULL,
+  xid             VARCHAR(32)      NOT NULL,
   user_id         BIGINT UNSIGNED NOT NULL,            -- 逻辑引用 users.id
   kb_id           BIGINT UNSIGNED NOT NULL DEFAULT 0,  -- 0 = 全局，否则单知识库
   agent           VARCHAR(32)     NOT NULL DEFAULT '',
@@ -373,7 +373,7 @@ CREATE TABLE chat_sessions (
 | 字段 | 类型 | 说明 |
 |------|------|------|
 | id | BIGINT UNSIGNED | 自增主键，仅内部与逻辑引用使用 |
-| xid | CHAR(20) | 对外业务主键（XID），兼 useChat chatId |
+| xid | VARCHAR(32) | 对外业务主键（<前缀>_<xid>，pkg/eid），兼 useChat chatId |
 | user_id | BIGINT UNSIGNED | 逻辑引用 users.id |
 | kb_id | BIGINT UNSIGNED | 检索范围：0 全局 / 否则单知识库，随会话固化 |
 | agent | VARCHAR(32) | 当前智能体 id（粘性状态，P1.5 多智能体路由用） |
@@ -393,7 +393,7 @@ CREATE TABLE chat_sessions (
 ```sql
 CREATE TABLE chat_messages (
   id         BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
-  xid        CHAR(20)      NOT NULL,
+  xid        VARCHAR(32)      NOT NULL,
   session_id BIGINT UNSIGNED NOT NULL,             -- 逻辑引用 chat_sessions.id
   role       TINYINT         NOT NULL,             -- 1 user 2 assistant
   agent      VARCHAR(32)     NOT NULL DEFAULT '',
@@ -408,7 +408,7 @@ CREATE TABLE chat_messages (
 | 字段 | 类型 | 说明 |
 |------|------|------|
 | id | BIGINT UNSIGNED | 自增主键，兼消息时序（压缩游标基于 id） |
-| xid | CHAR(20) | 对外业务主键（XID），兼 UIMessage.id |
+| xid | VARCHAR(32) | 对外业务主键（<前缀>_<xid>，pkg/eid），兼 UIMessage.id |
 | session_id | BIGINT UNSIGNED | 所属会话，逻辑引用 chat_sessions.id |
 | role | TINYINT | 1 user / 2 assistant |
 | agent | VARCHAR(32) | 产生该消息的智能体 id，user 消息为空 |
