@@ -4,7 +4,7 @@
 
 账号生命周期管理服务，对内暴露 gRPC 接口，数据持久化到 MySQL。
 
-负责：注册（邮箱+验证码）、登录（邮箱+密码，双 token 签发）、token 轮换、用户信息查询、修改密码、找回密码（TODO-014）、登录设备管理（TODO-015）、邮箱验证码发送与校验（Redis，TODO-013）。
+负责：注册（邮箱+验证码）、登录（邮箱+密码，双 token 签发）、token 轮换、用户信息查询、修改密码、找回密码（「忘记密码接口」）、登录设备管理（「登录设备管理接口」）、邮箱验证码发送与校验（Redis，「Redis 与邮箱验证码」）。
 不负责：access token 校验（由 Gateway 负责）、限流（由 Gateway 负责）、面向前端的 HTTP 接口（由 Gateway 转发）。
 
 ## 技术选型
@@ -48,8 +48,8 @@
 - refresh token 轮换（每次刷新原地更新会话 token_hash）
 - 用户信息查询（供 Gateway / 其他服务按 ID 查询）
 - 修改密码（校验旧密码，成功后吊销该用户全部会话）
-- 找回密码（邮箱验证码重置，成功后吊销该用户全部会话）——TODO-014
-- 登录设备管理（设备列表 / 踢设备下线）——TODO-015
+- 找回密码（邮箱验证码重置，成功后吊销该用户全部会话）——「忘记密码接口」
+- 登录设备管理（设备列表 / 踢设备下线）——「登录设备管理接口」
 
 **明确不做**（YAGNI，需求出现再加）：
 
@@ -111,9 +111,9 @@ service UserService {
   rpc Refresh(RefreshRequest) returns (RefreshResponse);
   rpc GetUser(GetUserRequest) returns (GetUserResponse);
   rpc UpdatePassword(UpdatePasswordRequest) returns (UpdatePasswordResponse);
-  rpc ResetPassword(ResetPasswordRequest) returns (ResetPasswordResponse);   // 忘记密码（TODO-014）
-  rpc ListSessions(ListSessionsRequest) returns (ListSessionsResponse);      // 登录设备列表（TODO-015）
-  rpc RevokeSession(RevokeSessionRequest) returns (RevokeSessionResponse);   // 踢设备下线（TODO-015）
+  rpc ResetPassword(ResetPasswordRequest) returns (ResetPasswordResponse);   // 忘记密码（「忘记密码接口」）
+  rpc ListSessions(ListSessionsRequest) returns (ListSessionsResponse);      // 登录设备列表（「登录设备管理接口」）
+  rpc RevokeSession(RevokeSessionRequest) returns (RevokeSessionResponse);   // 踢设备下线（「登录设备管理接口」）
 }
 
 message User {
@@ -142,8 +142,8 @@ message RegisterResponse { User user = 1; }   // 不返回 token，注册成功�
 message LoginRequest {
   string email = 1;
   string password = 2;
-  string device_id = 3;    // 设备码（客户端生成持久 UUID）
-  string device_info = 4;  // 设备信息（UA/平台摘要）
+  string device_id = 3;    // 设备码（可选；缺失由服务端生成，取值口径见 docs/data-model.md「设备标识（device_id）口径」）
+  string device_info = 4;  // 设备信息（可选；前端展示名，缺省由 Gateway 取 User-Agent 截断 255）
 }
 message LoginResponse {
   User   user = 1;
@@ -151,6 +151,7 @@ message LoginResponse {
   string refresh_token = 3;  // 不透明串，7 天
   int64  access_expires_in = 4;   // access 剩余秒数
   int64  refresh_expires_in = 5;  // refresh 剩余秒数
+  string device_id = 6;      // 回填：本次生效的设备码（前端存 localStorage，Gateway 设 `did` cookie）
 }
 
 message RefreshRequest  { string refresh_token = 1; }
@@ -206,8 +207,8 @@ message RevokeSessionResponse {}
 | Refresh | token 过期 / 无效（含轮换后旧 token 复用，按无效拒绝） | `Unauthenticated` |
 | GetUser | 目标不存在 | `NotFound` |
 | UpdatePassword | user_id 缺失、新密码不合法 | `InvalidArgument`；`Unauthenticated` 旧密码错误或用户不存在（user_id 由 Gateway 从 token 注入，用户不存在说明凭证陈旧，与防枚举策略一致，不返回 `NotFound`） |
-| ResetPassword | 验证码有效、新密码 8-64 字符 | `InvalidArgument`；`Unauthenticated` 验证码无效（TODO-014） |
-| ListSessions / RevokeSession | user_id 由 Gateway 注入；session_id 需归属该用户 | `InvalidArgument`；`NotFound` 会话不存在（TODO-015） |
+| ResetPassword | 验证码有效、新密码 8-64 字符 | `InvalidArgument`；`Unauthenticated` 验证码无效（「忘记密码接口」） |
+| ListSessions / RevokeSession | user_id 由 Gateway 注入；session_id 需归属该用户 | `InvalidArgument`；`NotFound` 会话不存在（「登录设备管理接口」） |
 
 - Login 不区分「邮箱不存在」与「密码错误」，防止账号枚举；Register / ResetPassword 同样不回传「邮箱是否已注册」等可枚举信息
 - 所有接口错误细节只写日志，不回传内部信息（与 vector-store / file-store 约定一致）
@@ -232,10 +233,10 @@ pkg/db/migrations/ganrag_user/
 
 ### 表结构（目标定稿）
 
-> **建表迁移已交付**（2026-10-15 迁移基线重写，0001-0003，含 xid；旧 `refresh_tokens` 及其物理外键随重写消除，见 [docs/fix.md](../../../docs/fix.md) `FIX-001`）；代码适配见 [docs/todo.md](../../../docs/todo.md) `TODO-011` / `TODO-012` / `TODO-016`。完整 DDL 与字段/索引表见 [docs/database.md](../../../docs/database.md)；设计决策见 [docs/data-model.md](../../../docs/data-model.md)「ganrag_user」。
+> **建表迁移已交付**（2026-10-15 迁移基线重写，0001-0003，含 xid；旧 `refresh_tokens` 及其物理外键随重写消除，见 [docs/fix.md](../../../docs/fix.md) `FIX-001`）；代码适配见 [docs/todo.md](../../../docs/todo.md) 「users 相关代码适配」 / 「会话模型代码适配」 / 「对外接口 xid」。完整 DDL 与字段/索引表见 [docs/database.md](../../../docs/database.md)；设计决策见 [docs/data-model.md](../../../docs/data-model.md)「ganrag_user」。
 
 ```sql
--- users：用户账号（TODO-011 改造：add email + uk_users_email、drop uk_users_username、drop nickname）
+-- users：用户账号（「users 相关代码适配」 改造：add email + uk_users_email、drop uk_users_username、drop nickname）
 CREATE TABLE users (
   id            BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
   email         VARCHAR(254) NOT NULL,             -- 登录标识（登录/找回密码）
@@ -248,11 +249,11 @@ CREATE TABLE users (
   UNIQUE KEY uk_users_email (email)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
--- sessions：登录会话（TODO-012 新建，替代 refresh_tokens；每设备一行）
+-- sessions：登录会话（「会话模型代码适配」 新建，替代 refresh_tokens；每设备一行）
 CREATE TABLE sessions (
   id             BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
   user_id        BIGINT UNSIGNED NOT NULL,          -- 逻辑引用 users.id（无外键）
-  device_id      VARCHAR(64)  NOT NULL,             -- 设备码（客户端生成持久 UUID）
+  device_id      VARCHAR(64)  NOT NULL,             -- 设备码（服务端生成/核对，见 docs/data-model.md「设备标识（device_id）口径」）
   device_info    VARCHAR(255) NOT NULL DEFAULT '',  -- 设备信息（UA/平台摘要，设备列表展示）
   token_hash     CHAR(64)     NOT NULL,             -- 当前 refresh token 的 SHA-256，轮换原地更新
   expires_at     DATETIME     NOT NULL,
@@ -270,6 +271,7 @@ CREATE TABLE sessions (
 
 - **登录 / 刷新**：单条唯一索引查询，无慢路径
 - **登录建会话**：按 `(user_id, device_id)` upsert `sessions` 行（同设备重登覆盖旧会话，`token_hash` 换新、`revoked_at` 清空）
+- **设备 ID 下发（方案 A）**：`device_id` 服务端生成/核对（取值优先级：请求体 > Gateway `did` cookie > 服务端生成 xid）；Gateway 登录成功后 `Set-Cookie: did=<device_id>`（HttpOnly，Max-Age 1 年，每次登录续期），登录响应 `device_id` 回填供前端存 localStorage；完整口径见 [docs/data-model.md](../../../docs/data-model.md)「设备标识（device_id）口径」
 - **refresh 轮换**：原地更新 `token_hash` 与 `last_active_at`；**不做重用检测**，旧 token 复用按无效拒绝（`ErrRefreshNotFound` → `Unauthenticated`）
 - **过期清理**：登录 / 刷新时顺带删除该用户已过期 `sessions` 行（惰性清理，无需定时任务）
 - **改密 / 找回密码**：单事务内更新 `users.password_hash` + 删除该用户全部 `sessions` 行
@@ -338,7 +340,7 @@ services:
 ```
 
 - 根 `Taskfile.yml` 新增任务：`task infra`（启动）、`task infra-down`（停止）；compose 与各服务脚本相互独立
-- **Redis 用途**：邮箱验证码（注册 / 找回密码，TODO-013）；限流、会话黑名单、缓存等其他用途暂不使用（YAGNI）。key 规范见根 AGENTS.md「Redis Key 规范」
+- **Redis 用途**：邮箱验证码（注册 / 找回密码，「Redis 与邮箱验证码」）；限流、会话黑名单、缓存等其他用途暂不使用（YAGNI）。key 规范见根 AGENTS.md「Redis Key 规范」
 - 应用库 `ganrag_user`（后续 repository 服务建 `ganrag_repository`）由迁移首次执行时创建
 
 ## 端口规划（全局）
@@ -374,4 +376,4 @@ service/user/
 > 已实现（2026-10-09）：proto、配置、迁移、store/auth/handler、单元测试（SQLite）与端到端冒烟（grpcurl）均完成；`Taskfile.yml` 端口已填 50051。
 >
 > **待实施（本文档已按新设计更新）**：邮箱登录标识 + sessions 会话模型 + Redis 邮箱验证码 + 找回密码 + 设备管理。
-> 建表迁移已交付（2026-10-15 重写，`pkg/db/migrations/ganrag_user/0001-0003`）；剩余代码适配与功能跟踪见 [docs/fix.md](../../../docs/fix.md) `FIX-001` 与 [docs/todo.md](../../../docs/todo.md) `TODO-011`~`TODO-016`。
+> 建表迁移已交付（2026-10-15 重写，`pkg/db/migrations/ganrag_user/0001-0003`）；剩余代码适配与功能跟踪见 [docs/fix.md](../../../docs/fix.md) `FIX-001` 与 [docs/todo.md](../../../docs/todo.md) 「users 相关代码适配」至「对外接口 xid」。

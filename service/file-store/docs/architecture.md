@@ -1,5 +1,7 @@
 # File Store 服务架构选型
 
+> ⚠️ **已弃用（2026-10-17）**：File Store 服务将被移除，对象存储改用 Garage（S3 协议），由 Repository 服务直接访问。新设计见 [service/repository/docs/architecture.md](../../repository/docs/architecture.md)「对象存储与文件访问」，跟踪见 [docs/todo.md](../../../docs/todo.md) 「架构迁移（移除 File Store 直连 Garage）」。本文档仅存档，不再维护。
+
 ## 概述
 
 自建对象存储服务，使用本地文件夹模拟对象存储，对外暴露 gRPC 接口。

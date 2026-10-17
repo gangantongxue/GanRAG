@@ -25,7 +25,7 @@ RAG（检索增强生成）是实现「基于用户自己的知识回答问题�
 │   ├── user/             # 用户服务
 │   ├── repository/       # 知识库服务
 │   ├── vector-store/     # 向量存储服务（chromem-go + gRPC）
-│   └── file-store/       # 对象存储服务
+│   └── (对象存储 = Garage S3，外部基础设施，不在 service/ 下)
 ├── docker-compose.yml    # 基础设施编排（MySQL，task infra 启动）
 ├── Taskfile.yml          # 根 Taskfile：统一编排
 └── web/                  # 前端
@@ -60,7 +60,7 @@ RAG（检索增强生成）是实现「基于用户自己的知识回答问题�
 | `task stop` | 停止并删除所有服务容器 |
 | `task --list` | 查看全部任务 |
 
-服务名即 `service/` 下的目录名（gateway、ai、user、repository、vector-store、file-store）。
+服务名即 `service/` 下的目录名（gateway、ai、user、repository、vector-store）；对象存储使用 Garage（S3 协议），由 Repository 服务直接访问。
 
 ### 服务目录命令（以 vector-store 为例）
 

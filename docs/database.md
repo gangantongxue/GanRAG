@@ -16,7 +16,7 @@
 - 表尾：`ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`
 - **禁止物理外键**：表间关联一律逻辑引用（只存目标自增 id，注释标明引用目标），完整性与级联清理由应用层负责
 - **XID 业务主键**：对外展示实体带 `xid CHAR(20)`（`github.com/rs/xid` 生成）+ UNIQUE；对外接口/URL/前端只用 xid，自增 id 不出服务；**逻辑引用一律存自增 id，不存 xid**
-- **内容存储口径**：文章/文档大对象不入 MySQL（存 file-store，只存 key，bucket 约定 `kb-<kb_id>`）；聊天消息、思考、工具结果、模型上下文等交易型短文本入 MySQL（LONGTEXT / JSON）
+- **内容存储口径**：文章/文档大对象不入 MySQL（存 Garage 对象存储，只存 key，统一 `o/<object_xid>`）；聊天消息、思考、工具结果、模型上下文等交易型短文本入 MySQL（LONGTEXT / JSON）
 
 ---
 
@@ -63,7 +63,7 @@ CREATE TABLE sessions (
   id             BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
   xid            CHAR(20)      NOT NULL,             -- XID 业务主键，对外标识（设备管理接口用）
   user_id        BIGINT UNSIGNED NOT NULL,           -- 逻辑引用 users.id
-  device_id      VARCHAR(64)  NOT NULL,              -- 设备码（客户端生成持久 UUID）
+  device_id      VARCHAR(64)  NOT NULL,              -- 设备码（服务端生成/核对，见 data-model.md「设备标识（device_id）口径」）
   device_info    VARCHAR(255) NOT NULL DEFAULT '',   -- 设备信息（UA/平台摘要，设备列表展示）
   token_hash     CHAR(64)     NOT NULL,              -- 当前 refresh token 的 SHA-256，轮换原地更新
   expires_at     DATETIME     NOT NULL,              -- 会话过期（refresh TTL 固定期限）
@@ -83,7 +83,7 @@ CREATE TABLE sessions (
 | id | BIGINT UNSIGNED | 自增主键，仅内部使用 |
 | xid | CHAR(20) | 对外业务主键（XID），设备管理接口使用 |
 | user_id | BIGINT UNSIGNED | 逻辑引用 users.id |
-| device_id | VARCHAR(64) | 设备码，客户端生成持久 UUID |
+| device_id | VARCHAR(64) | 设备码，服务端生成/核对（口径见 [data-model.md](data-model.md)「设备标识（device_id）口径」） |
 | device_info | VARCHAR(255) | 设备信息（UA/平台摘要），列表展示 |
 | token_hash | CHAR(64) | 当前 refresh token 的 SHA-256 hex；轮换**原地更新**，不做重用检测 |
 | expires_at | DATETIME | 过期时间；惰性清理（登录/刷新时顺带删该用户过期行） |
@@ -98,7 +98,7 @@ CREATE TABLE sessions (
 | uk_sessions_user_device | (user_id, device_id) | 每设备一行，同设备重登 upsert |
 | idx_sessions_user_id | (user_id) | 「我的设备列表」/ 吊销全部 |
 
-语义：多端登录 = 多行；改密/找回密码 = 删该用户全部行；「踢设备」= 置 `revoked_at`。
+语义：多端登录 = 多行；改密/找回密码 = 删该用户全部行；「踢设备」= 置 `revoked_at`。设备 ID 为服务端生成/核对（取值优先级：请求体 > Gateway `did` cookie > 服务端生成 xid，口径见 [data-model.md](data-model.md)「设备标识（device_id）口径」）。
 
 ## user_follows 用户关注
 
@@ -223,7 +223,7 @@ CREATE TABLE articles (
   dir_id      BIGINT UNSIGNED NOT NULL DEFAULT 0,   -- 0 = 根，逻辑引用 directories.id
   type        TINYINT         NOT NULL,             -- 1 md 2 txt 3 pdf 4 docx 5 html（原始格式）
   title       VARCHAR(200)    NOT NULL,
-  content_key VARCHAR(500)    NOT NULL,             -- 正文 md 的 file-store key（MySQL 不存内容）
+  content_key VARCHAR(500)    NOT NULL,             -- 正文 md 对象 key（o/<object_xid>，MySQL 不存内容）
   created_by  BIGINT UNSIGNED NOT NULL,             -- 逻辑引用 users.id
   created_at  DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at  DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -242,7 +242,7 @@ CREATE TABLE articles (
 | dir_id | BIGINT UNSIGNED | 所属目录，0 表示根 |
 | type | TINYINT | 原始格式：1 md / 2 txt / 3 pdf / 4 docx / 5 html |
 | title | VARCHAR(200) | 标题，不设唯一（引用靠 xid 不靠标题） |
-| content_key | VARCHAR(500) | 正文 md 的 file-store key（bucket：`kb-<kb_id>`） |
+| content_key | VARCHAR(500) | 正文 md 对象 key（统一 `o/<object_xid>`） |
 | created_by | BIGINT UNSIGNED | 创建者，逻辑引用 users.id |
 | created_at / updated_at | DATETIME | 自动维护 |
 
@@ -260,9 +260,9 @@ CREATE TABLE articles (
 | md / txt | 正文（按 content_key 取流渲染） | 正文 md 原文 | ✔ |
 | pdf / docx / html | **源文件附件**（attachments kind=1，原始排版） | markitdown 转换结果 md | ✔ |
 
-**内容读写**：保存 = 先写 file-store 正文 → 再更新 `content_key` → 删旧文件；中断最多留孤儿文件，不会出现指向不存在内容的行；向量化/重建索引/换模型按 `content_key` 读 md，不重跑 markitdown。
+**内容读写**：保存 = 先写 Garage 对象 → 再更新 `content_key` → 删旧对象；中断最多留孤儿对象，不会出现指向不存在内容的行；向量化/重建索引/换模型按 `content_key` 读 md，不重跑 markitdown。
 
-**文章互链（不建表）**：关联即 Markdown 链接——引用 `[标题](/api/v1/articles/<xid>)`、图片 `![](/api/v1/attachments/<xid>)`；保存时相对路径改写为稳定 URL，断链保留原文、渲染时标记失效。
+**文章互链（不建表）**：关联即 Markdown 链接，用户只写**相对路径**（`[标题](../design/arch.md)`、`![](assets/img.png)`）；前端渲染时以当前文章为基准解析：图片/文件拼 Gateway 资源地址 `/api/v1/articles/<xid>/resource?path=...`，文章跳 `/api/v1/articles/<xid>`；断链保留原文、渲染时标记失效。
 
 ## attachments 附件
 
@@ -273,7 +273,8 @@ CREATE TABLE attachments (
   kb_id         BIGINT UNSIGNED NOT NULL,           -- 逻辑引用 knowledge_bases.id
   article_id    BIGINT UNSIGNED NOT NULL,           -- 所属文章，逻辑引用 articles.id
   kind          TINYINT         NOT NULL,           -- 1 源文件 2 内嵌图片/附件
-  file_key      VARCHAR(500)    NOT NULL,           -- file-store key（bucket: kb-<kb_id>）
+  file_key      VARCHAR(500)    NOT NULL,           -- 对象 key（o/<object_xid>，统一单桶）
+  relative_path VARCHAR(500)    NOT NULL,           -- 规范化相对路径（如 assets/logo.png）
   original_name VARCHAR(255)    NOT NULL,
   content_type  VARCHAR(100)    NOT NULL,
   size          BIGINT UNSIGNED NOT NULL,
@@ -282,6 +283,7 @@ CREATE TABLE attachments (
   created_at    DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (id),
   UNIQUE KEY uk_attachments_xid (xid),
+  UNIQUE KEY uk_attachments_article_path (article_id, relative_path),
   KEY idx_attachments_article (article_id, kind),
   KEY idx_attachments_kb (kb_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
@@ -294,7 +296,8 @@ CREATE TABLE attachments (
 | kb_id | BIGINT UNSIGNED | 所属知识库，逻辑引用 knowledge_bases.id |
 | article_id | BIGINT UNSIGNED | 所属文章（源文件 1:1，内嵌图片 1:N） |
 | kind | TINYINT | 1 源文件：上传时建立、固定绑定、随文章删除；2 内嵌图片/附件：保存文章时按正文链接全量重建、孤儿即时清理 |
-| file_key | VARCHAR(500) | file-store 内 key，形如 `<uuid>/<原始文件名>` |
+| file_key | VARCHAR(500) | Garage 对象 key，统一 `o/<object_xid>` |
+| relative_path | VARCHAR(500) | 规范化 Markdown 相对路径，(article_id, relative_path) 唯一 |
 | original_name | VARCHAR(255) | 原始文件名，展示用 |
 | content_type | VARCHAR(100) | MIME 类型 |
 | size | BIGINT UNSIGNED | 字节数 |
@@ -306,10 +309,11 @@ CREATE TABLE attachments (
 |------|----|------|
 | PRIMARY | id | 主键（内部） |
 | uk_attachments_xid | (xid) | 对外标识唯一 |
+| uk_attachments_article_path | (article_id, relative_path) | 「当前文章 + 相对路径」稳定找回对象（渲染期解析） |
 | idx_attachments_article | (article_id, kind) | 文章附件清理/列举 |
 | idx_attachments_kb | (kb_id) | 库内清理 |
 
-约定：附件归单篇文章独占，不跨文章共享（文章复制需复制附件行与 file-store 对象）；Repository 是 file-store 唯一调用方，gateway 鉴权后取流。
+约定：附件归单篇文章独占，不跨文章共享（文章复制需复制附件行与对象）；Repository 是 Garage 唯一直接访问方，Gateway 验签路由后由 Repository 校验权限并签发 Presigned URL（302）；`relative_path` 只存规范化相对路径（禁绝对路径、禁 `..` 越权）。
 
 ## kb_user_relations 知识库×用户关系
 

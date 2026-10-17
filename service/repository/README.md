@@ -1,6 +1,8 @@
 # Repository 服务
 
-知识库管理服务。
+知识库管理服务，同时是**对象存储（Garage，S3 协议）的唯一直接访问方**：文章正文、附件对象的写入/删除、文件资源权限校验与 Presigned URL 签发都在本服务。
+
+架构设计见 [docs/architecture.md](docs/architecture.md)（对象存储与文件访问、Markdown 相对路径解析、权限边界）。
 
 > 当前状态：目录骨架，尚未实现。实现时在 `cmd/server` 下编写 main 包，并在 `Taskfile.yml` 的 `PORT` / `CONTAINER_PORT` 中填写端口。
 

@@ -31,13 +31,16 @@
 └─────────────────┘  └─────────────────┘  └─────────────────┘
           │                                       │
           │         基础设施服务（gRPC）          │
-          ├───────────────────┬───────────────────┘
-          ▼                   ▼
-┌─────────────────┐  ┌─────────────────┐
-│  Vector Store   │  │   File Store    │
-│   向量化存储    │  │    对象存储     │
-│  详见 docs      │  │   详见 docs     │
-└─────────────────┘  └─────────────────┘
+          └───────────────────┬───────────────────┘
+                              ▼
+                    ┌─────────────────┐
+                    │  Vector Store   │
+                    │   向量化存储    │
+                    │  详见 docs      │
+                    └─────────────────┘
+
+  对象存储（S3 协议，唯一直接访问方 = Repository）：
+  前端 → Gateway（验签/路由）→ Repository（权限 + Presigned URL）→ Garage（S3）
 ```
 
 ## 技术选型
@@ -153,7 +156,7 @@ Go 标准库结构化日志 + 日志文件轮转：
 | 配置(YAML) | Viper | 结构化配置 |
 | 配置(.env) | GoDotEnv | 环境变量 |
 | 向量存储 | chromem-go | 纯 Go 内嵌向量库，详见 service/vector-store/docs/ |
-| 对象存储 | 自建 (os 包) | Go 标准库实现，详见 service/file-store/docs/ |
+| 对象存储 | Garage（S3 协议） | 通用 S3，直连可迁移 MinIO/AWS S3/R2；Repository 是唯一直接访问方，详见 [service/repository/docs/architecture.md](../../service/repository/docs/architecture.md)「对象存储与文件访问」 |
 | 文档转换 | markitdown (Python CLI) | PDF / Word / HTML → md，上传时转换，详见 docs/product.md |
 
 ## 各服务架构详情
@@ -163,9 +166,8 @@ Go 标准库结构化日志 + 日志文件轮转：
 | Gateway | [service/gateway/docs/architecture.md](../../service/gateway/docs/architecture.md) |
 | AI Service | [service/ai/docs/architecture.md](../../service/ai/docs/architecture.md) |
 | User Service | [service/user/docs/architecture.md](../../service/user/docs/architecture.md) |
-| Repository Service | - |
+| Repository Service | [service/repository/docs/architecture.md](../../service/repository/docs/architecture.md) |
 | Vector Store | [service/vector-store/docs/architecture.md](../../service/vector-store/docs/architecture.md) |
-| File Store | [service/file-store/docs/architecture.md](../../service/file-store/docs/architecture.md) |
 
 ## 设计落地状态
 
@@ -175,12 +177,14 @@ Go 标准库结构化日志 + 日志文件轮转：
 
 | 设计项 | 状态 | 阶段 | 详见 |
 |--------|------|------|------|
-| 多智能体路由与切换（Decima-small） | 📝 设计定稿，代码未实现 | P1.5 | [service/ai/docs/architecture.md](../../service/ai/docs/architecture.md)（TODO-003） |
-| 上下文压缩（会话级 context + 消息游标 + 隐藏 Agent 提示词） | 📝 设计定稿，代码未实现 | P1.5 | [service/ai/docs/architecture.md](../../service/ai/docs/architecture.md)、[data-model.md](data-model.md)（TODO-004） |
-| 多路召回聚合与 Decima-small 相关性审查 | 📝 设计定稿，代码未实现 | P3 | [service/ai/docs/architecture.md](../../service/ai/docs/architecture.md)（TODO-009） |
-| 文档上传（pdf / docx / html → markitdown） | 📝 设计定稿，代码未实现 | P1.5 | 本文「文档转换」、[product.md](product.md)（TODO-005） |
-| 向量化按模型存储与检索路由 | 📝 设计定稿，代码未实现 | P1.5 | [service/vector-store/docs/architecture.md](../../service/vector-store/docs/architecture.md)（TODO-006） |
-| chat_sessions.agent / context / context_msg_id 字段 | 🗄 表结构已设计，随 P1 建表落地 | P1 | [data-model.md](data-model.md)（TODO-002） |
+| **移除 File Store，直连 Garage（S3）单桶 + Presigned URL 文件访问** | 📝 设计定稿，代码未实现（最高优先级） | P1 架构迁移 | [service/repository/docs/architecture.md](../../service/repository/docs/architecture.md)（「架构迁移（移除 File Store 直连 Garage）」） |
+| Markdown 相对路径解析与 `attachments.relative_path` | 📝 设计定稿，代码未实现 | P1 架构迁移 | [service/repository/docs/architecture.md](../../service/repository/docs/architecture.md)、[data-model.md](data-model.md)（「架构迁移（移除 File Store 直连 Garage）」） |
+| 多智能体路由与切换（Decima-small） | 📝 设计定稿，代码未实现 | P1.5 | [service/ai/docs/architecture.md](../../service/ai/docs/architecture.md)（「多智能体路由与切换」） |
+| 上下文压缩（会话级 context + 消息游标 + 隐藏 Agent 提示词） | 📝 设计定稿，代码未实现 | P1.5 | [service/ai/docs/architecture.md](../../service/ai/docs/architecture.md)、[data-model.md](data-model.md)（「上下文压缩」） |
+| 多路召回聚合与 Decima-small 相关性审查 | 📝 设计定稿，代码未实现 | P3 | [service/ai/docs/architecture.md](../../service/ai/docs/architecture.md)（「多路召回聚合与检索权重接入」） |
+| 文档上传（pdf / docx / html → markitdown） | 📝 设计定稿，代码未实现 | P1.5 | 本文「文档转换」、[product.md](product.md)（「文档上传」） |
+| 向量化按模型存储与检索路由 | 📝 设计定稿，代码未实现 | P1.5 | [service/vector-store/docs/architecture.md](../../service/vector-store/docs/architecture.md)（「向量化按模型存储与检索路由」） |
+| chat_sessions.agent / context / context_msg_id 字段 | 🗄 表结构已设计，随 P1 建表落地 | P1 | [data-model.md](data-model.md)（「AI 服务实现」） |
 
 ## 决策记录
 
@@ -220,3 +224,7 @@ Go 标准库结构化日志 + 日志文件轮转：
 | 2026-10-15 | 登录标识改邮箱（email 唯一，username 降为可重复展示名、删 nickname）；refresh_tokens 改 sessions 会话表（每设备一行，多端登录 + 设备管理）；引入 Redis 存邮箱验证码（注册/找回密码） | 登录/找回密码统一走邮箱；会话按设备建模支撑设备管理；验证码的过期与一次性语义由 Redis 天然承担不建表；详见 docs/data-model.md、service/user/docs/architecture.md |
 | 2026-10-15 | repository 数据库重设计（8 表→5 表）：正文与转换结果存 file-store（`articles.content_key`）、MySQL 不存内容；文章互链不建表即 Markdown 链接；对外实体加 XID 业务主键；附件挂 article_id 吸收绑定表；kb_members+kb_stars 合并 kb_user_relations | 内容是大对象不占 MySQL 行、重建索引免重跑转换；关联即正文本身不需关系表；自增 id 不出服务防遍历；表少口径清；覆盖 2026-10-09「前端渲染统一走 content」口径（改为 pdf/docx/html 展示源文件、content 仅供向量化/AI）；详见 docs/data-model.md「ganrag_repository」、根 AGENTS.md「业务主键（XID）规范」 |
 | 2026-10-15 | 聊天记录按「消息信封 + 全量步骤」存储（chat_messages + chat_message_parts），步骤 type/meta 对齐 Vercel AI SDK `UIMessage` part 模型、payload 原样存；消息加 xid、步骤不加；聊天交易型短文本入 MySQL | 每步（思考/工具调用/来源）全量存储支撑任意后加展示、扩展零 DDL；历史无损重组喂 useChat(initialMessages)，工具/思考/来源原生展示；RAG 来源存 article_xid 点击跳文章；详见 docs/data-model.md「ganrag_ai」 |
+| 2026-10-17 | **移除 File Store，直连 Garage（S3）**：删除 service/file-store 与 api/ 下 FileStore proto/gen；Repository 为唯一直接访问 Garage 的服务，Gateway 只验签/路由，前端只认 Gateway 稳定地址 | 通用 S3 协议后续可迁 MinIO/AWS S3/R2 只改配置；S3 凭证收敛一处；移除自建本地文件 + JSON 索引维护；详见 service/repository/docs/architecture.md |
+| 2026-10-17 | 对象存储采用「单共享桶私有 + 统一对象 key `o/<object_xid>`」，不按知识库分桶、不设图片专属目录 | 「共享桶」≠ 匿名公开桶，桶 ACL 私有防绕过 Gateway；统一 key 与目录/重命名/知识库迁移解耦，迁移 S3 时 key 原样平移 |
+| 2026-10-17 | 文件访问走「Gateway 稳定路由 → Repository 权限校验 → Presigned URL 302」；Markdown 内只写相对路径，前端渲染时以当前文章为基准解析并拼 Gateway 地址 | 权限判定收敛 Repository（知识库领域边界），Gateway 不复制规则；相对路径由 Repository 再规范化校验防越权；Markdown 不存 Presigned URL（会过期）；详见 service/repository/docs/architecture.md |
+| 2026-10-17 | `attachments` 增 `relative_path`（article_id + relative_path 唯一），支撑「当前文章 + 相对路径」稳定找回对象；迁移前先 `task db-status`，已应用迁移禁改，新增 up/down 成对 | 用户自定义 Markdown 相对引用需持久化才能渲染期解析；见 docs/data-model.md「ganrag_repository」 |

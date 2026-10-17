@@ -44,15 +44,15 @@ ganrag_user                          ganrag_repository
                  │                         │ id / xid       │
                  │                         │ kb_id / dir_id │
                  │                         │ type / title   │
-                 │                         │ content_key ───┼─▶ file-store
-                 │                         │ created_by     │   bucket kb-<id>
+                 │                         │ content_key ───┼─▶ Garage (S3)
+                 │                         │ created_by     │   key: o/<object_xid>
                  │                         └───────┬────────┘
                  │                                 │
                  │                         ┌───────┴──────────┐
                  │                         │ attachments      │
                  │                         ├──────────────────┤
                  │                         │ xid / article_id │
-                 │                         │ kind / file_key ─┼─▶ file-store
+                 │                         │ kind / file_key ─┼─▶ Garage (S3)
                  │                         └──────────────────┘
 ganrag_ai
 ┌─────────────────┐   ┌──────────────────┐   ┌──────────────────┐
@@ -67,7 +67,7 @@ ganrag_ai
 
 | 决策点 | 结论 | 原因 |
 |--------|------|------|
-| 文章内容存储 | 正文与转换结果一律存 **file-store**（`articles.content_key`），MySQL 只存元数据与对象 key | 内容是大对象不占 MySQL 行；重建索引 / 换模型直接读 file-store，不重跑 markitdown |
+| 文章内容存储 | 正文与转换结果一律存 **Garage（S3）**（`articles.content_key`，对象 key 统一 `o/<object_xid>`），MySQL 只存元数据与对象 key | 内容是大对象不占 MySQL 行；重建索引 / 换模型直接读对象存储，不重跑 markitdown |
 | 引用方式 | 图片与互链以 **Markdown 链接**形式存在于正文（稳定 URL 指向 xid），**不建关系表** | 关联即正文内容本身；URL 按 xid，文章移动 / 改名不打断引用；断链渲染时标记 |
 | 业务主键 | 对外展示实体一律加 `xid CHAR(20)`（XID），对外接口/URL/前端只用 xid；逻辑引用存自增 id | 自增 id 不出服务，防遍历枚举；见根 AGENTS.md「业务主键（XID）规范」 |
 | 改写时机 | md 保存时解析相对路径 → 绑定附件/目标文章 → 改写为稳定 URL | 渲染端零解析成本；解析失败的链接保留原文，渲染时标记失效 |
@@ -84,7 +84,7 @@ ganrag_ai
 | 物理外键 | 全局禁止，一律逻辑引用（应用层保证完整性与级联删除） | 迁移独立、可并行开发；规则见根 AGENTS.md「数据库设计规范」 |
 | 会话范围 | `chat_sessions.kb_id = 0` 表示全局 | 与根节点约定一致 |
 | 聊天记录存储 | 消息信封 + 全量步骤两层（`chat_messages` + `chat_message_parts`）；步骤 type/meta 对齐 Vercel AI SDK `UIMessage` part 模型，payload 原样存 | 每步（思考/工具/来源）全量可存可展示，扩展展示零 DDL；历史无损重组为 `useChat(initialMessages)` |
-| 内容入 MySQL 口径 | 文章/文档大对象不入 MySQL（存 file-store，只存 key）；聊天消息、思考、工具结果、模型上下文等**交易型短文本入 MySQL** | 前者是文档大对象、后者高频按序读写且随事务；见根 AGENTS.md「数据库设计规范」 |
+| 内容入 MySQL 口径 | 文章/文档大对象不入 MySQL（存 Garage 对象存储，只存 key）；聊天消息、思考、工具结果、模型上下文等**交易型短文本入 MySQL** | 前者是文档大对象、后者高频按序读写且随事务；见根 AGENTS.md「数据库设计规范」 |
 
 ## 表结构 DDL
 
@@ -92,7 +92,7 @@ ganrag_ai
 
 ### ganrag_repository（Repository 服务）
 
-> **建表迁移已交付**（2026-10-15 迁移基线重写，`pkg/db/migrations/ganrag_repository/0001-0005`）；服务实现见 [todo.md](todo.md) `TODO-001`。统一约定补充：对外实体带 `xid CHAR(20)` 业务主键（见根 AGENTS.md「业务主键（XID）规范」）；完整结构参考见 [database.md](database.md)。
+> **建表迁移已交付**（2026-10-15 迁移基线重写，`pkg/db/migrations/ganrag_repository/0001-0005`）；服务实现见 [todo.md](todo.md) 「Repository 服务实现」。统一约定补充：对外实体带 `xid CHAR(20)` 业务主键（见根 AGENTS.md「业务主键（XID）规范」）；完整结构参考见 [database.md](database.md)。
 
 #### knowledge_bases 知识库
 
@@ -148,7 +148,7 @@ CREATE TABLE articles (
   dir_id      BIGINT UNSIGNED NOT NULL DEFAULT 0,   -- 0 = 根，逻辑引用 directories.id
   type        TINYINT         NOT NULL,             -- 1 md 2 txt 3 pdf 4 docx 5 html（原始格式）
   title       VARCHAR(200)    NOT NULL,
-  content_key VARCHAR(500)    NOT NULL,             -- 正文 md 的 file-store key（MySQL 不存内容）
+  content_key VARCHAR(500)    NOT NULL,             -- 正文 md 对象 key（o/<object_xid>，MySQL 不存内容）
   created_by  BIGINT UNSIGNED NOT NULL,             -- 逻辑引用 users.id
   created_at  DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at  DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -160,8 +160,8 @@ CREATE TABLE articles (
 ```
 
 - **展示与检索口径**：md/txt 展示正文（按 `content_key` 取流）；pdf/docx/html 展示**源文件附件**（kind=1，原始排版），`content_key` 内为 markitdown 转换结果，仅向量化与 AI 检索
-- **内容读写**：保存 = 先写 file-store 正文 → 再更新 `content_key` → 删旧文件；中断最多留孤儿文件（后续清理），不会出现指向不存在内容的行；向量化 / 重建索引 / 换模型按 `content_key` 读 md，不重跑 markitdown
-- **文章互链不建表**：关联即 Markdown 链接（引用 `[标题](/api/v1/articles/<xid>)`、图片 `![](/api/v1/attachments/<xid>)`），保存时相对路径改写为稳定 URL；断链保留原文、渲染时标记失效；「删除前提示被引用」「反向链接」由渲染端现算或走向量检索
+- **内容读写**：保存 = 先写 Garage 对象 → 再更新 `content_key` → 删旧对象；中断最多留孤儿对象（后续清理），不会出现指向不存在内容的行；向量化 / 重建索引 / 换模型按 `content_key` 读 md，不重跑 markitdown
+- **文章互链不建表**：关联即 Markdown 链接，用户只写**相对路径**（如 `[标题](../design/arch.md)`、`![](assets/img.png)`）；前端渲染时以当前文章为基准解析，图片/文件拼 Gateway 资源地址 `/api/v1/articles/<xid>/resource?path=...`、文章跳 `/api/v1/articles/<xid>`；断链保留原文、渲染时标记失效；「删除前提示被引用」「反向链接」由渲染端现算或走向量检索
 
 #### attachments 附件
 
@@ -172,7 +172,8 @@ CREATE TABLE attachments (
   kb_id         BIGINT UNSIGNED NOT NULL,           -- 逻辑引用 knowledge_bases.id
   article_id    BIGINT UNSIGNED NOT NULL,           -- 所属文章，逻辑引用 articles.id
   kind          TINYINT         NOT NULL,           -- 1 源文件（pdf/docx/html 原文，固定绑定） 2 内嵌图片/附件（保存时按正文链接重建）
-  file_key      VARCHAR(500)    NOT NULL,           -- file-store key（bucket: kb-<kb_id>）
+  file_key      VARCHAR(500)    NOT NULL,           -- 对象 key（o/<object_xid>，统一单桶）
+  relative_path VARCHAR(500)    NOT NULL,           -- 规范化相对路径（如 assets/logo.png），供渲染期解析
   original_name VARCHAR(255)    NOT NULL,           -- 原始文件名（展示用）
   content_type  VARCHAR(100)    NOT NULL,           -- image/png 等
   size          BIGINT UNSIGNED NOT NULL,
@@ -186,9 +187,9 @@ CREATE TABLE attachments (
 );
 ```
 
-- **file-store bucket 约定：`kb-<kb_id>`**，key 形如 `<uuid>/<原始文件名>`；Repository 服务是 file-store 的唯一调用方，gateway 只经 Repository 鉴权后取流
+- **对象存储**：Garage（S3）单共享桶 + 统一对象 key `o/<object_xid>`（不按知识库分桶、不设图片专属目录）；Repository 是唯一直接访问方，Gateway 验签 + 路由后由 Repository 校验权限并签发 Presigned URL（302）
 - 稳定 URL 形如 `/api/v1/attachments/<xid>`，经 gateway 鉴权（公开库可见、私有库校验成员）后转发
-- 附件归单篇文章独占，不跨文章共享（文章复制需复制附件行与 file-store 对象）；kind=2 保存时按正文链接全量重建、孤儿即时清理；kind=1 随文章删除清理
+- 附件归单篇文章独占，不跨文章共享（文章复制需复制附件行与对象）；kind=2 保存时按正文相对路径引用全量重建、孤儿即时清理；kind=1 随文章删除清理；`relative_path` 只存规范化相对路径（禁绝对路径、禁 `..` 越权）
 
 #### kb_user_relations 知识库×用户关系
 
@@ -209,7 +210,7 @@ CREATE TABLE kb_user_relations (
 
 ### ganrag_user（User 服务）
 
-> **建表迁移已交付**（2026-10-15 迁移基线重写，`pkg/db/migrations/ganrag_user/0001-0003`，含 xid）；代码适配见 [todo.md](todo.md) `TODO-011` / `TODO-012` / `TODO-016`。接口与流程详见 [service/user/docs/architecture.md](../service/user/docs/architecture.md)；完整结构参考见 [database.md](database.md)。
+> **建表迁移已交付**（2026-10-15 迁移基线重写，`pkg/db/migrations/ganrag_user/0001-0003`，含 xid）；代码适配见 [todo.md](todo.md) 「users 相关代码适配」 / 「会话模型代码适配」 / 「对外接口 xid」。接口与流程详见 [service/user/docs/architecture.md](../service/user/docs/architecture.md)；完整结构参考见 [database.md](database.md)。
 
 #### users 用户账号
 
@@ -235,7 +236,7 @@ CREATE TABLE sessions (
   id             BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
   xid            CHAR(20)      NOT NULL,             -- XID 业务主键，对外标识（设备管理接口用）
   user_id        BIGINT UNSIGNED NOT NULL,          -- 逻辑引用 users.id
-  device_id      VARCHAR(64)  NOT NULL,             -- 设备码（客户端生成持久 UUID）
+  device_id      VARCHAR(64)  NOT NULL,             -- 设备码（服务端生成/核对，见「设备标识（device_id）口径」）
   device_info    VARCHAR(255) NOT NULL DEFAULT '',  -- 设备信息（UA/平台摘要，设备列表展示）
   token_hash     CHAR(64)     NOT NULL,             -- 当前 refresh token 的 SHA-256，轮换原地更新
   expires_at     DATETIME     NOT NULL,
@@ -249,10 +250,24 @@ CREATE TABLE sessions (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 ```
 
-- 一行 = 一个设备的登录会话，多端登录即多行；同设备重复登录 upsert 该行（覆盖旧会话）
+- 一行 = 一个设备的登录会话，多端登录即多行；同设备重复登录 upsert 该行（覆盖旧会话）；`device_id` 取值口径见下节
 - 轮换原地更新 `token_hash`，**不做重用检测**：旧 token 复用按无效拒绝（无 `prev_token_hash` / 作废行保留）
 - 「踢设备」= 置 `revoked_at`（行保留供展示）；改密 / 找回密码 = 删除该用户全部行
 - 过期清理沿用惰性策略：登录 / 刷新时顺带删除该用户 `expires_at` 已过期行
+
+#### 设备标识（device_id）口径（方案 A）
+
+> Web 端不存在硬件级设备唯一标识；`device_id` 的可靠性靠「服务端生成 + 浏览器双份持久（cookie + localStorage）」保证，同一浏览器 profile 内长期稳定。迁移文件 `0002_sessions.up.sql` 内的列注释为历史文本（已应用禁改），口径以本节为准。
+
+| 规则 | 约定 |
+|------|------|
+| 生成方 | 服务端为权威生成方：登录请求携带合法 `device_id`（1-64 位 `[A-Za-z0-9_-]`）则沿用，否则服务端生成 |
+| 取值优先级 | 请求体 `device_id`（前端 localStorage）> Gateway `did` cookie > 服务端生成 |
+| 生成器 | `github.com/rs/xid`（20 字符，与 `sessions.xid` 同源，后续统一收进 `pkg/xid`） |
+| Gateway cookie | 登录成功后 `Set-Cookie: did=<device_id>; HttpOnly; SameSite=Lax; Path=/; Max-Age=31536000`（生产加 `Secure`），每次登录续期；登录请求无 body `device_id` 时读 cookie 填入 gRPC 请求 |
+| 回填同步 | 登录响应返回 `device_id`，前端写 localStorage，下次登录放请求体；两处不一致以请求体为准，cookie 覆盖为同值（收敛到单一值） |
+| 失效语义 | cookie 与 localStorage 全清 = 新设备行（接受，无解）；不做疑似同设备归并（YAGNI） |
+| device_info | 请求体可选（前端展示名）；缺省 Gateway 取 `User-Agent` 截断 255 字符；仅设备列表展示用 |
 
 #### 邮箱验证码（Redis，不建表）
 
@@ -280,7 +295,7 @@ CREATE TABLE user_follows (                          -- 0003_user_follows
 
 ### ganrag_ai（AI 服务）
 
-> **建表迁移已交付**（2026-10-15 迁移基线重写，`pkg/db/migrations/ganrag_ai/0001-0003`）；AI 服务实现见 [todo.md](todo.md) `TODO-002`。聊天记录按「消息信封 + 全量步骤」两层设计；步骤词表与 payload 对齐 Vercel AI SDK（`@ai-sdk/react` useChat）的 `UIMessage` part 模型，历史消息可直接重组喂给 `useChat(initialMessages)`。完整结构参考见 [database.md](database.md)。
+> **建表迁移已交付**（2026-10-15 迁移基线重写，`pkg/db/migrations/ganrag_ai/0001-0003`）；AI 服务实现见 [todo.md](todo.md) 「AI 服务实现」。聊天记录按「消息信封 + 全量步骤」两层设计；步骤词表与 payload 对齐 Vercel AI SDK（`@ai-sdk/react` useChat）的 `UIMessage` part 模型，历史消息可直接重组喂给 `useChat(initialMessages)`。完整结构参考见 [database.md](database.md)。
 
 #### chat_sessions 聊天会话
 
@@ -381,7 +396,7 @@ relation(kb, me) =
 1. 向量库按「知识库 × 向量化模型」隔离：vector-store 集合 `kb-<kb_id>-<model_id>`（文章分块入库），全局检索时对可见集合逐个查询后归并；检索只查**当前模型**后缀的集合——用什么模型，就检索对应的向量化结果
 2. 文章保存/删除时，Repository 服务向 AI 服务同步增量（或 AI 订阅），由 AI 负责向量的写入与清理
 3. 检索先做权限硬过滤，再分别走向量与关键词召回并合并去重；重排序使用排名归一化、关系、时间、热度，并由 Decima-small 对前 K 个候选做 `noul` 相关性审查（P1 只做候选集过滤，P3 接入权重与审查）
-4. 向量输入统一为 `articles.content_key` 指向的 file-store 内 md（pdf/docx/html 即转换后的 md）：转换结果一次存储，重建索引 / 换 embedding 模型不重跑 markitdown；文档内嵌图片不提取，不参与分块
+4. 向量输入统一为 `articles.content_key` 指向的 Garage 对象内 md（pdf/docx/html 即转换后的 md）：转换结果一次存储，重建索引 / 换 embedding 模型不重跑 markitdown；文档内嵌图片不提取，不参与分块
 5. 模型上下文不进用户消息流：压缩上下文存 `chat_sessions.context`，内部结构包含最新 `agent-system` 提示词和摘要；prompt 拼装 = 固定 System Prompt + context + `chat_messages` 中 `id >= context_msg_id` 的可见消息；预计请求 token 达模型上限的 65% 时触发压缩，压缩时**替换** context 并推进游标，最新 Agent 提示词置于摘要前，原始消息不删，`search_context` 排除 `agent-system`
 6. 切换向量化模型：新写入即切新模型集合 → 后台按 `articles.content_key` 读 md **全量重建**新模型集合（不重跑 markitdown）→ 重建完成前旧集合继续服务 → 完成后配置原子切换并下线旧集合（保留期可回滚）；旧向量按 metadata `embedding_model` 批量清理
 

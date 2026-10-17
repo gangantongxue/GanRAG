@@ -269,7 +269,7 @@ store 层会在内存中记录每个集合的向量维度，用于写入/检索�
 | `task run -- vector-store --detach` | 后台启动指定服务 |
 | `task stop` | 停止并删除所有服务容器 |
 
-服务名即 `service/` 下的目录名（gateway、ai、user、repository、vector-store、file-store）。
+服务名即 `service/` 下的目录名（gateway、ai、user、repository、vector-store）。
 
 ### 服务目录命令（在 service/vector-store 下执行）
 
