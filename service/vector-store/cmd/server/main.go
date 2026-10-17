@@ -6,15 +6,13 @@
 // 启动示例（在 service/vector-store 目录下）：
 //
 //	go run ./cmd/server
-//	go run ./cmd/server -config configs/config.yaml -env .env
+//	go run ./cmd/server -config configs/config.yaml -env /path/to/.env（缺省自动读仓库根 .env）
 package main
 
 import (
 	"context"
-	"errors"
 	"flag"
 	"fmt"
-	"io/fs"
 	"os"
 	"os/signal"
 	"syscall"
@@ -40,13 +38,13 @@ func main() {
 func run() error {
 	// 1. 解析启动参数
 	configPath := flag.String("config", "configs/config.yaml", "YAML 配置文件路径")
-	envPath := flag.String("env", ".env", ".env 文件路径（文件不存在时忽略）")
+	envPath := flag.String("env", "", ".env 文件路径（缺省自动加载仓库根 .env，全项目统一）")
 	flag.Parse()
 
-	// 2. 读取配置（YAML + 环境变量覆盖，环境变量前缀 GANRAG_）
+	// 2. 读取配置（YAML + 仓库根 .env / 环境变量覆盖，前缀 GANRAG_）
 	cfg, err := config.Read[svcconfig.Config](config.Options{
 		ConfigPath: *configPath,
-		EnvPath:    existingPath(*envPath),
+		EnvPath:    *envPath,
 		EnvPrefix:  "GANRAG",
 	})
 	if err != nil {
@@ -105,20 +103,4 @@ func run() error {
 
 	log.Info("服务已退出")
 	return nil
-}
-
-// existingPath 返回存在的文件路径，不存在时返回空字符串
-//
-// pkg/config 对空 EnvPath 会跳过 .env 加载，避免默认 .env 不存在时启动报错。
-//
-// 参数：
-//   - path: 待检查的文件路径
-//
-// 返回：
-//   - string: 文件存在时返回原路径，不存在时返回空字符串
-func existingPath(path string) string {
-	if _, err := os.Stat(path); errors.Is(err, fs.ErrNotExist) {
-		return ""
-	}
-	return path
 }

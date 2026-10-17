@@ -276,7 +276,7 @@ CREATE TABLE sessions (
 - **过期清理**：登录 / 刷新时顺带删除该用户已过期 `sessions` 行（惰性清理，无需定时任务）
 - **改密 / 找回密码**：单事务内更新 `users.password_hash` + 删除该用户全部 `sessions` 行
 - **踢设备 / 登出**：置 `revoked_at`（行保留供列表展示）；设备列表默认只返回在线行
-- **邮箱验证码**：存 Redis（不建表），key `user:email_code:<scene>:<email>`（scene：`register` / `reset_password`），value 为验证码 SHA-256 哈希，TTL 5 分钟；验证成功即 DEL、失败 5 次作废该 key；发送限频 `user:email_code_limit:<email>`（TTL 60s）
+- **邮箱验证码**：存 Redis（不建表），key `user:email_code:<scene>:<email>`（scene：`register` / `reset_password`），value 为验证码 SHA-256 哈希，TTL 5 分钟；验证成功即 DEL、失败 5 次作废（辅助计数键 `user:email_code_tries:<scene>:<email>`）；发送限频 `user:email_code_limit:<email>`（TTL 60s，不分场景）
 
 ## 配置
 
@@ -310,6 +310,13 @@ redis:
   password: ""            # 建议 GANRAG_REDIS_PASSWORD 环境变量覆盖
   db: 0
 
+mail:
+  host: ""                # SMTP 服务器；为空即 dev 降级（验证码写日志，仅限本地开发）
+  port: 587               # SMTP 端口（587 STARTTLS）
+  username: ""            # SMTP 账号（建议 GANRAG_MAIL_USERNAME 环境变量覆盖）
+  password: ""            # SMTP 密码（建议 GANRAG_MAIL_PASSWORD 环境变量覆盖）
+  from: ""                # 发件人地址（mail.host 已配置时必填）
+
 log:
   output: "both"          # console | file | both
   level: "info"           # debug | info | warn | error
@@ -317,7 +324,7 @@ log:
   directory: "./logs"
 ```
 
-- 配置由公共包 `pkg/config` 读取，所有配置项可用 `GANRAG_` 前缀环境变量覆盖（嵌套用下划线）
+- 配置由公共包 `pkg/config` 读取，环境变量统一读**仓库根 `.env`**（启动自动加载，`-env` 可显式覆盖），所有配置项可用 `GANRAG_` 前缀环境变量覆盖（嵌套用下划线）
 - `jwt.secret` 为空时启动报错——不做硬编码默认值
 
 ## 基础设施：MySQL 部署
@@ -340,7 +347,7 @@ services:
 ```
 
 - 根 `Taskfile.yml` 新增任务：`task infra`（启动）、`task infra-down`（停止）；compose 与各服务脚本相互独立
-- **Redis 用途**：邮箱验证码（注册 / 找回密码，「Redis 与邮箱验证码」）；限流、会话黑名单、缓存等其他用途暂不使用（YAGNI）。key 规范见根 AGENTS.md「Redis Key 规范」
+- **Redis 用途**：邮箱验证码（注册 / 找回密码，「Redis 与邮箱验证码」）；限流、会话黑名单、缓存等其他用途暂不使用（YAGNI）。key 规范见根 AGENTS.md「Redis Key 规范」；连接统一由公共包 `pkg/redis` 提供（`Config` / `Open` / `Close`，各服务缓存用途复用同一入口）
 - 应用库 `ganrag_user`（后续 repository 服务建 `ganrag_repository`）由迁移首次执行时创建
 
 ## 端口规划（全局）
@@ -376,5 +383,6 @@ service/user/
 
 > 已实现（2026-10-09）：proto、配置、迁移、store/auth/handler、单元测试（SQLite）与端到端冒烟（grpcurl）均完成；`Taskfile.yml` 端口已填 50051。
 >
-> **待实施（本文档已按新设计更新）**：邮箱登录标识 + sessions 会话模型 + Redis 邮箱验证码 + 找回密码 + 设备管理。
+> **待实施（本文档已按新设计更新）**：邮箱登录标识 + sessions 会话模型 + 找回密码 + 设备管理。
+> Redis 邮箱验证码 + 邮件发送通道已实现（2026-10-17：`pkg/redis` 连接包、`internal/auth/emailcode.go` / `mailer.go`、`SendEmailCode` RPC 与网关 `POST /api/v1/auth/email-code`；SMTP 未配置时验证码降级写日志，仅限本地开发）。
 > 建表迁移已交付（2026-10-15 重写，`pkg/db/migrations/ganrag_user/0001-0003`）；剩余代码适配与功能跟踪见 [docs/fix.md](../../../docs/fix.md) `FIX-001` 与 [docs/todo.md](../../../docs/todo.md) 「users 相关代码适配」至「对外接口 xid」。

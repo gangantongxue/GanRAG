@@ -10,8 +10,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/alicebob/miniredis/v2"
 	"github.com/glebarez/sqlite"
 	"github.com/golang-jwt/jwt/v5"
+	goredis "github.com/redis/go-redis/v9"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"gorm.io/gorm"
@@ -61,7 +63,11 @@ func newTestHandler(t *testing.T) (*Handler, *gorm.DB) {
 	}
 	// 日志静默，避免测试输出刷屏
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	return NewHandler(store.New(db), jwtCfg, log), db
+	// 验证码组件挂 miniredis、邮件通道走 dev 降级（写日志），测试不依赖外部 Redis / SMTP
+	mr := miniredis.RunT(t)
+	rdb := goredis.NewClient(&goredis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { _ = rdb.Close() })
+	return NewHandler(store.New(db), jwtCfg, auth.NewEmailCode(rdb), auth.NewMailer(config.MailConfig{}, log), log), db
 }
 
 // mustRegister 注册用户，失败则终止测试
@@ -299,4 +305,29 @@ func TestUpdatePassword(t *testing.T) {
 	if resp := mustLogin(t, h, "erin", "new-pass-123"); resp.User.Id != id {
 		t.Errorf("新密码登录返回用户 = %+v", resp.User)
 	}
+}
+
+// TestSendEmailCode 校验发码：参数校验、正常空响应（防枚举）、60s 限频
+func TestSendEmailCode(t *testing.T) {
+	h, _ := newTestHandler(t)
+	ctx := t.Context()
+
+	// 邮箱 / 场景不合法
+	_, err := h.SendEmailCode(ctx, &userv1.SendEmailCodeRequest{Email: "bad-email", Scene: auth.SceneRegister})
+	assertCode(t, err, codes.InvalidArgument, "邮箱格式不合法")
+	_, err = h.SendEmailCode(ctx, &userv1.SendEmailCodeRequest{Email: "a@b.com", Scene: "login"})
+	assertCode(t, err, codes.InvalidArgument, "场景不合法")
+
+	// 正常发送：空响应（不回传细节）
+	resp, err := h.SendEmailCode(ctx, &userv1.SendEmailCodeRequest{Email: "User@Example.com", Scene: auth.SceneRegister})
+	if err != nil {
+		t.Fatalf("SendEmailCode() 错误: %v", err)
+	}
+	if resp == nil {
+		t.Fatal("SendEmailCode() 返回 nil")
+	}
+
+	// 60s 内同邮箱重发触发限频（不分场景）
+	_, err = h.SendEmailCode(ctx, &userv1.SendEmailCodeRequest{Email: "user@example.com", Scene: auth.SceneResetPassword})
+	assertCode(t, err, codes.ResourceExhausted, "60s 内重发")
 }

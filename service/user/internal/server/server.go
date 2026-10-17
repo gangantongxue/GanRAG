@@ -11,6 +11,7 @@ import (
 	"google.golang.org/grpc/reflection"
 
 	userv1 "github.com/gangantongxue/GanRAG/api/gen/user/v1"
+	"github.com/gangantongxue/GanRAG/service/user/internal/auth"
 	"github.com/gangantongxue/GanRAG/service/user/internal/config"
 	"github.com/gangantongxue/GanRAG/service/user/internal/store"
 )
@@ -30,19 +31,21 @@ type Server struct {
 //   - cfg: gRPC 服务配置
 //   - st: 数据访问层
 //   - jwt: JWT 签发配置
+//   - codes: 邮箱验证码组件（Redis）
+//   - mailer: 验证码邮件发送通道
 //   - log: 日志实例
 //
 // 返回：
 //   - *Server: 服务端实例
 //   - error: 监听失败时返回错误
-func New(cfg config.ServerConfig, st *store.Store, jwt config.JWTConfig, log *slog.Logger) (*Server, error) {
+func New(cfg config.ServerConfig, st *store.Store, jwt config.JWTConfig, codes *auth.EmailCode, mailer *auth.Mailer, log *slog.Logger) (*Server, error) {
 	lis, err := net.Listen("tcp", cfg.Addr())
 	if err != nil {
 		return nil, fmt.Errorf("监听 %s 失败: %w", cfg.Addr(), err)
 	}
 
 	grpcServer := grpc.NewServer()
-	userv1.RegisterUserServiceServer(grpcServer, NewHandler(st, jwt, log))
+	userv1.RegisterUserServiceServer(grpcServer, NewHandler(st, jwt, codes, mailer, log))
 
 	// 健康检查：供负载均衡/编排系统探测服务状态
 	healthServer := health.NewServer()

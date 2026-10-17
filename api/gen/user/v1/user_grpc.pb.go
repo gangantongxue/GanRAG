@@ -19,6 +19,7 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
+	UserService_SendEmailCode_FullMethodName  = "/user.v1.UserService/SendEmailCode"
 	UserService_Register_FullMethodName       = "/user.v1.UserService/Register"
 	UserService_Login_FullMethodName          = "/user.v1.UserService/Login"
 	UserService_Refresh_FullMethodName        = "/user.v1.UserService/Refresh"
@@ -36,6 +37,8 @@ const (
 // access token 的校验由 Gateway 负责（本地验签，不回源本服务）。
 // 注：架构文档草案中 service 与 message 同名为 User，proto3 禁止，service 更名为 UserService。
 type UserServiceClient interface {
+	// SendEmailCode 发送邮箱验证码（register / reset_password；验证码存 Redis，SMTP 下发）
+	SendEmailCode(ctx context.Context, in *SendEmailCodeRequest, opts ...grpc.CallOption) (*SendEmailCodeResponse, error)
 	// Register 用户注册（校验用户名唯一性，密码 bcrypt 哈希存储）
 	Register(ctx context.Context, in *RegisterRequest, opts ...grpc.CallOption) (*RegisterResponse, error)
 	// Login 用户登录（校验凭证，签发 access + refresh 双 token）
@@ -54,6 +57,16 @@ type userServiceClient struct {
 
 func NewUserServiceClient(cc grpc.ClientConnInterface) UserServiceClient {
 	return &userServiceClient{cc}
+}
+
+func (c *userServiceClient) SendEmailCode(ctx context.Context, in *SendEmailCodeRequest, opts ...grpc.CallOption) (*SendEmailCodeResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(SendEmailCodeResponse)
+	err := c.cc.Invoke(ctx, UserService_SendEmailCode_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 func (c *userServiceClient) Register(ctx context.Context, in *RegisterRequest, opts ...grpc.CallOption) (*RegisterResponse, error) {
@@ -116,6 +129,8 @@ func (c *userServiceClient) UpdatePassword(ctx context.Context, in *UpdatePasswo
 // access token 的校验由 Gateway 负责（本地验签，不回源本服务）。
 // 注：架构文档草案中 service 与 message 同名为 User，proto3 禁止，service 更名为 UserService。
 type UserServiceServer interface {
+	// SendEmailCode 发送邮箱验证码（register / reset_password；验证码存 Redis，SMTP 下发）
+	SendEmailCode(context.Context, *SendEmailCodeRequest) (*SendEmailCodeResponse, error)
 	// Register 用户注册（校验用户名唯一性，密码 bcrypt 哈希存储）
 	Register(context.Context, *RegisterRequest) (*RegisterResponse, error)
 	// Login 用户登录（校验凭证，签发 access + refresh 双 token）
@@ -136,6 +151,9 @@ type UserServiceServer interface {
 // pointer dereference when methods are called.
 type UnimplementedUserServiceServer struct{}
 
+func (UnimplementedUserServiceServer) SendEmailCode(context.Context, *SendEmailCodeRequest) (*SendEmailCodeResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method SendEmailCode not implemented")
+}
 func (UnimplementedUserServiceServer) Register(context.Context, *RegisterRequest) (*RegisterResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method Register not implemented")
 }
@@ -170,6 +188,24 @@ func RegisterUserServiceServer(s grpc.ServiceRegistrar, srv UserServiceServer) {
 		t.testEmbeddedByValue()
 	}
 	s.RegisterService(&UserService_ServiceDesc, srv)
+}
+
+func _UserService_SendEmailCode_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SendEmailCodeRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(UserServiceServer).SendEmailCode(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: UserService_SendEmailCode_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(UserServiceServer).SendEmailCode(ctx, req.(*SendEmailCodeRequest))
+	}
+	return interceptor(ctx, in, info, handler)
 }
 
 func _UserService_Register_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
@@ -269,6 +305,10 @@ var UserService_ServiceDesc = grpc.ServiceDesc{
 	ServiceName: "user.v1.UserService",
 	HandlerType: (*UserServiceServer)(nil),
 	Methods: []grpc.MethodDesc{
+		{
+			MethodName: "SendEmailCode",
+			Handler:    _UserService_SendEmailCode_Handler,
+		},
 		{
 			MethodName: "Register",
 			Handler:    _UserService_Register_Handler,

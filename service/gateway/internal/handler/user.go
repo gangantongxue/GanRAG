@@ -63,6 +63,26 @@ type updatePasswordRequest struct {
 	NewPassword string `json:"new_password"` // 8-64 字符
 }
 
+// sendEmailCodeRequest POST /api/v1/auth/email-code 请求体
+type sendEmailCodeRequest struct {
+	Email string `json:"email"`
+	Scene string `json:"scene"` // register | reset_password
+}
+
+// SendEmailCode 发送邮箱验证码（公开路由，防枚举：正常路径空对象响应）
+func (h *UserHandler) SendEmailCode(ctx context.Context, c *app.RequestContext) {
+	var req sendEmailCodeRequest
+	if err := c.Bind(&req); err != nil {
+		writeError(c, 400, "请求体不合法")
+		return
+	}
+	resp, err := h.client.SendEmailCode(ctx, &userv1.SendEmailCodeRequest{
+		Email: req.Email,
+		Scene: req.Scene,
+	})
+	h.respond(c, resp, err, "send_email_code")
+}
+
 // Register 注册（公开路由）
 //
 // 返回：

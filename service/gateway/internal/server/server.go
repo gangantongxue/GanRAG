@@ -50,6 +50,7 @@ func New(cfg config.Config, conn *grpc.ClientConn, log *slog.Logger) *Server {
 	pub.POST("/register", uh.Register)
 	pub.POST("/login", uh.Login)
 	pub.POST("/refresh", uh.Refresh)
+	pub.POST("/email-code", uh.SendEmailCode)
 
 	// 需验签路由：先本地验签注入 user_id，再按用户维度限流
 	authed := h.Group("/api/v1")

@@ -49,8 +49,18 @@ func writeTestEnvFile(t *testing.T, content string) string {
 	return path
 }
 
+// noRepoEnv 将工作目录切到临时目录，隔离仓库根 .env 的自动加载
+//
+// Read 的 EnvPath 缺省会向上定位仓库根 .env（生产语义），测试若留在包目录
+// 会把仓库根变量载入进程环境并跨用例泄漏，故统一在临时目录中执行。
+func noRepoEnv(t *testing.T) {
+	t.Helper()
+	t.Chdir(t.TempDir())
+}
+
 // TestReadYAML 测试读取 YAML 配置文件
 func TestReadYAML(t *testing.T) {
+	noRepoEnv(t)
 	cfgPath := writeTestConfig(t, `
 server:
   host: "0.0.0.0"
@@ -88,6 +98,7 @@ database:
 
 // TestReadEnvFile 测试读取 .env 文件并覆盖 YAML 配置
 func TestReadEnvFile(t *testing.T) {
+	noRepoEnv(t)
 	cfgPath := writeTestConfig(t, `
 server:
   host: "0.0.0.0"
@@ -126,6 +137,7 @@ GANRAG_DATABASE_PASSWORD=test_password_123
 
 // TestReadEnvOverride 测试系统环境变量覆盖
 func TestReadEnvOverride(t *testing.T) {
+	noRepoEnv(t)
 	cfgPath := writeTestConfig(t, `
 server:
   host: "0.0.0.0"
@@ -150,6 +162,7 @@ server:
 
 // TestReadEmptyOptions 测试空选项返回零值结构体
 func TestReadEmptyOptions(t *testing.T) {
+	noRepoEnv(t)
 	cfg, err := Read[TestConfig](Options{})
 	if err != nil {
 		t.Fatalf("读取配置失败: %v", err)
@@ -165,6 +178,7 @@ func TestReadEmptyOptions(t *testing.T) {
 
 // TestReadFileNotFound 测试配置文件不存在时返回错误
 func TestReadFileNotFound(t *testing.T) {
+	noRepoEnv(t)
 	_, err := Read[TestConfig](Options{
 		ConfigPath: "/nonexistent/path/config.yaml",
 	})
@@ -175,6 +189,7 @@ func TestReadFileNotFound(t *testing.T) {
 
 // TestReadEnvFileNotFound 测试 .env 文件不存在时返回错误
 func TestReadEnvFileNotFound(t *testing.T) {
+	noRepoEnv(t)
 	_, err := Read[TestConfig](Options{
 		EnvPath: "/nonexistent/path/.env",
 	})
@@ -185,6 +200,7 @@ func TestReadEnvFileNotFound(t *testing.T) {
 
 // TestReadNestedEnvOverride 测试嵌套环境变量覆盖（database.host）
 func TestReadNestedEnvOverride(t *testing.T) {
+	noRepoEnv(t)
 	cfgPath := writeTestConfig(t, `
 database:
   host: "localhost"

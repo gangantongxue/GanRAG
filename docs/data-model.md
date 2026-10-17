@@ -277,8 +277,9 @@ CREATE TABLE sessions (
 | Key | `user:email_code:<scene>:<email>`（scene：`register` / `reset_password`） |
 | Value | 验证码 SHA-256 哈希 |
 | TTL | 5 分钟（过期由 Redis 自然淘汰） |
-| 一次性 | 验证成功即 DEL；校验失败 5 次作废该 key（防爆破） |
-| 发送限频 | 同邮箱 60s 一次：`user:email_code_limit:<email>`，TTL 60s |
+| 一次性 | 验证成功即 DEL |
+| 失败计数 | 辅助键 `user:email_code_tries:<scene>:<email>`（INCR），TTL 5 分钟；校验失败 5 次作废验证码（DEL 码与计数，防爆破） |
+| 发送限频 | 同邮箱 60s 一次：`user:email_code_limit:<email>`（不分场景），TTL 60s |
 
 #### user_follows 关注
 

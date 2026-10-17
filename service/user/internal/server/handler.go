@@ -48,9 +48,11 @@ var (
 // Handler 实现 userv1.UserServiceServer
 type Handler struct {
 	userv1.UnimplementedUserServiceServer
-	st  *store.Store     // 数据访问层
-	jwt config.JWTConfig // 双 token 签发配置
-	log *slog.Logger     // 日志（错误细节只写日志，不回传内部信息）
+	st     *store.Store     // 数据访问层
+	jwt    config.JWTConfig // 双 token 签发配置
+	codes  *auth.EmailCode  // 邮箱验证码组件（Redis）
+	mailer *auth.Mailer     // 验证码邮件发送通道
+	log    *slog.Logger     // 日志（错误细节只写日志，不回传内部信息）
 }
 
 // NewHandler 创建 gRPC handler
@@ -58,12 +60,39 @@ type Handler struct {
 // 参数：
 //   - st: 数据访问层
 //   - jwt: JWT 签发配置
+//   - codes: 邮箱验证码组件
+//   - mailer: 验证码邮件发送通道
 //   - log: 日志实例
 //
 // 返回：
 //   - *Handler: handler 实例
-func NewHandler(st *store.Store, jwt config.JWTConfig, log *slog.Logger) *Handler {
-	return &Handler{st: st, jwt: jwt, log: log}
+func NewHandler(st *store.Store, jwt config.JWTConfig, codes *auth.EmailCode, mailer *auth.Mailer, log *slog.Logger) *Handler {
+	return &Handler{st: st, jwt: jwt, codes: codes, mailer: mailer, log: log}
+}
+
+// SendEmailCode 发送邮箱验证码（注册 / 找回密码）
+//
+// 防枚举：正常路径一律返回空响应，不回传是否已注册等细节。
+// 错误码：InvalidArgument 邮箱 / 场景不合法；ResourceExhausted 触发 60s 发送限频。
+func (h *Handler) SendEmailCode(ctx context.Context, req *userv1.SendEmailCodeRequest) (*userv1.SendEmailCodeResponse, error) {
+	email := auth.NormalizeEmail(req.Email)
+	if !auth.ValidEmail(email) {
+		return nil, errcode.InvalidArgument("邮箱格式不正确")
+	}
+	if !auth.ValidScene(req.Scene) {
+		return nil, errcode.InvalidArgument("验证码场景不合法")
+	}
+
+	// 生成并落 Redis（限频占用失败即拒绝），明文码只进邮件通道
+	code, err := h.codes.Issue(ctx, req.Scene, email)
+	if err != nil {
+		return nil, errcode.Status(h.log, "SendEmailCode", err)
+	}
+	if err := h.mailer.SendCode(email, req.Scene, code); err != nil {
+		// 邮件通道失败：内部细节只写日志，对外统一 Internal
+		return nil, errcode.Status(h.log, "SendEmailCode/发送邮件", err)
+	}
+	return &userv1.SendEmailCodeResponse{}, nil
 }
 
 // Register 用户注册

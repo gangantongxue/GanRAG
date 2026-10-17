@@ -10,17 +10,13 @@
 
 ```bash
 # 仓库根目录
-cp .env.example .env   # 首次：设置 MySQL 密码
-task infra             # 启动 MySQL
+cp .env.example .env   # 首次：生成随机密钥并填入（openssl rand 命令见模板注释）
+task infra             # 启动 MySQL、Redis、Garage
 task db-up             # 同步迁移（服务配置 auto_migrate=true 时启动也会自动执行）
 ```
 
-本地运行需在本目录准备 `.env`（已 gitignore）：
-
-```bash
-GANRAG_DATABASE_PASSWORD=<与根 .env 的 GANRAG_DB_PASSWORD 一致>
-GANRAG_JWT_SECRET=<随机字符串，必填>
-```
+环境变量**统一读仓库根 `.env`**（启动时自动加载，无需在本目录准备 `.env`；`-env` 可显式覆盖）：
+`GANRAG_DATABASE_PASSWORD`（数据库）与 `GANRAG_JWT_SECRET`（JWT，必填）均已包含在根 `.env`。
 
 ## Task 命令
 
@@ -40,7 +36,7 @@ task stop                           # 停止并删除容器
 容器内访问 MySQL 需注入网络内主机名：
 
 ```bash
-task run -- --detach --env GANRAG_DATABASE_HOST=ganrag-mysql --env-file .env
+task run -- --detach --env GANRAG_DATABASE_HOST=ganrag-mysql --env-file ../../.env
 ```
 
 在仓库根目录也可以统一操作：
@@ -59,7 +55,7 @@ go test ./... -count=1                 # bufconn gRPC 接口测试（真实协�
 ./scripts/e2e.sh                       # 真实环境冒烟：真实 MySQL + 真实配置 + TCP，全接口 32 条断言
 ```
 
-`e2e.sh` 前置：`task infra` 启动 MySQL、仓库根与本目录 `.env` 已配置、已安装 grpcurl；
+`e2e.sh` 前置：`task infra` 启动 MySQL、仓库根 `.env` 已配置、已安装 grpcurl；
 脚本自行编译并启动服务（50051 端口需空闲），结束自动停止并清理 `e2e_*` 测试用户。
 
 ## 本地调试（grpcurl）

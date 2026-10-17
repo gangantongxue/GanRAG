@@ -1,18 +1,20 @@
-# GanRAG 基础设施编排：MySQL（多服务共享数据库）+ Garage（S3 对象存储，Repository 唯一直连）
+# GanRAG 基础设施编排：MySQL（多服务共享数据库）+ Redis（邮箱验证码等缓存）+ Garage（S3 对象存储，Repository 唯一直连）
 #
 # 用法：
 #   task infra        启动（后台，healthcheck 就绪后可执行 task db-up）
 #   task infra-down   停止（数据卷保留，数据不丢）
 #
-# 数据持久化：全部数据存 named volume（mysql-data / garage-meta / garage-data），
+# 数据持久化：MySQL / Garage 数据存 named volume（mysql-data / garage-meta / garage-data），
 # 容器重启、重建、docker compose down 均不丢数据；只有显式 `docker compose down -v`
 # 才会删除数据卷（会清空全部数据，慎用）。
+# Redis 不落数据卷（验证码类数据可不做持久化，重启失效即重取）。
 #
 # 连接参数来自仓库根 .env（已 gitignore，模板见 .env.example）：
 #   MYSQL_ROOT_PASSWORD   root 密码（仅容器初始化用）
 #   GANRAG_DB_USER        应用账号（默认 ganrag，task db-* 与各服务共用）
 #   GANRAG_DB_PASSWORD    应用账号密码
 #   GANRAG_DB_PORT        宿主机映射端口（默认 3306，也是 task db-* 连接的端口）
+#   GANRAG_REDIS_PASSWORD Redis 访问密码（各服务经 pkg/redis 连接共用）
 #   GARAGE_RPC_SECRET     Garage 集群内部 RPC 密钥（openssl rand -hex 32）
 #   GARAGE_ADMIN_TOKEN    Garage 管理 API token（openssl rand -base64 32）
 #   GARAGE_DEFAULT_ACCESS_KEY / GARAGE_DEFAULT_SECRET_KEY / GARAGE_DEFAULT_BUCKET
@@ -39,6 +41,27 @@ services:
     healthcheck:
       # $$ 转义 compose 插值，由容器内 shell 展开环境变量
       test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p$$MYSQL_ROOT_PASSWORD --silent"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
+  # Redis：邮箱验证码等缓存数据（连接统一走 pkg/redis；key 规范见根 AGENTS.md「Redis Key 规范」）
+  redis:
+    image: redis:7
+    container_name: ganrag-redis
+    restart: unless-stopped
+    environment:
+      GANRAG_REDIS_PASSWORD: ${GANRAG_REDIS_PASSWORD:?请在 .env 设置 GANRAG_REDIS_PASSWORD}
+      TZ: Asia/Shanghai
+    # 官方镜像无内置密码环境变量，命令内显式 requirepass（$$ 转义 compose 插值，由容器内 shell 展开）
+    command: ["sh", "-c", "exec redis-server --requirepass \"$$GANRAG_REDIS_PASSWORD\""]
+    ports:
+      # 6379 绑定 127.0.0.1：宿主机直跑服务（go run）可连；容器网络内用容器名 ganrag-redis
+      - "127.0.0.1:6379:6379"
+    networks:
+      - ganrag
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a \"$$GANRAG_REDIS_PASSWORD\" ping"]
       interval: 5s
       timeout: 3s
       retries: 30

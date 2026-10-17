@@ -26,7 +26,7 @@ RAG（检索增强生成）是实现「基于用户自己的知识回答问题�
 │   ├── repository/       # 知识库服务
 │   ├── vector-store/     # 向量存储服务（chromem-go + gRPC）
 │   └── (对象存储 = Garage S3，外部基础设施，不在 service/ 下)
-├── docker-compose.yml    # 基础设施编排（MySQL、Garage，task infra 启动）
+├── docker-compose.yml    # 基础设施编排（MySQL、Redis、Garage，task infra 启动）
 ├── Taskfile.yml          # 根 Taskfile：统一编排
 └── web/                  # 前端
 ```
@@ -47,7 +47,7 @@ RAG（检索增强生成）是实现「基于用户自己的知识回答问题�
 | 命令 | 说明 |
 |------|------|
 | `task proto` | 生成所有服务的 Proto Go 代码（api/gen） |
-| `task infra` / `task infra-down` | 启动 / 停止共享基础设施（MySQL、Garage；数据卷保留不丢数据） |
+| `task infra` / `task infra-down` | 启动 / 停止共享基础设施（MySQL、Redis、Garage；数据卷保留不丢数据） |
 | `task db-up` | 将全部库同步到最新 SQL 迁移（golang-migrate up，幂等） |
 | `task db-status` | 查看各库当前迁移版本与「可修改 / 已应用锁定」的 SQL 文件 |
 | `task db-gen` | 同步迁移后用 gorm gen 生成数据库 model/query 代码 |
@@ -120,8 +120,8 @@ go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@v1.6.2
 ## 数据库（MySQL）
 
 ```bash
-cp .env.example .env   # 设置 MySQL 密码（.env 已 gitignore，首次执行）
-task infra             # 启动 MySQL、Garage（docker compose）
+cp .env.example .env   # 首次：生成随机密钥并填入（.env 已 gitignore；全项目统一读仓库根这一个）
+task infra             # 启动 MySQL、Redis、Garage（docker compose）
 task db-up             # 建库并同步全部 SQL 迁移
 task db-gen            # gorm gen 生成 model/query（pkg/db/model、pkg/db/query，提交入库）
 task db-status         # 查看当前迁移版本与「可修改 / 已应用锁定」的 SQL 文件

@@ -9,14 +9,14 @@
 #
 # 前置条件：
 #   - task infra 已启动 MySQL（容器 ganrag-mysql）
-#   - service/user/.env 已配置（GANRAG_DATABASE_PASSWORD、GANRAG_JWT_SECRET）
+#   - 仓库根 .env 已配置（GANRAG_DATABASE_PASSWORD、GANRAG_JWT_SECRET）
 #   - 已安装 grpcurl 与 python3
 #   - 50051 端口空闲（脚本自行编译并启动服务，结束自动停止）
 #
 # 测试数据：用户名统一 e2e_<时间戳> 前缀，结束时从数据库整体清理。
 set -euo pipefail
 
-# 脚本所在目录与服务目录（服务配置 configs/config.yaml、.env 均按服务目录相对解析）
+# 脚本所在目录与服务目录（服务配置 configs/config.yaml 按服务目录相对解析；环境变量统一读仓库根 .env）
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SERVICE_DIR="$(dirname "${SCRIPT_DIR}")"
 cd "${SERVICE_DIR}"
@@ -152,12 +152,11 @@ command -v python3 >/dev/null || fatal "未安装 python3"
 command -v docker >/dev/null || fatal "未安装 docker"
 docker ps --format '{{.Names}}' | grep -qx 'ganrag-mysql' || fatal "MySQL 容器未运行，请先执行：task infra（仓库根目录）"
 
-# 读取 .env：仓库根（数据库账号密码，供禁用与清理用）+ 服务目录（JWT 密钥，验签用）
+# 读取仓库根 .env（数据库账号密码供禁用与清理用；JWT 密钥验签用，服务启动也自动读同一文件）
 ROOT_ENV="$(cd "${SERVICE_DIR}/../.." && pwd)/.env"
 [ -f "${ROOT_ENV}" ] || fatal "缺少仓库根 .env（cp .env.example .env 后填写密码）"
-[ -f "${SERVICE_DIR}/.env" ] || fatal "缺少 service/user/.env（配置 GANRAG_DATABASE_PASSWORD 与 GANRAG_JWT_SECRET）"
 # shellcheck disable=SC1090
-set -a && . "${ROOT_ENV}" && . "${SERVICE_DIR}/.env" && set +a
+set -a && . "${ROOT_ENV}" && set +a
 
 # 50051 端口预检：已被占用则拒绝测试，避免误杀用户自己的服务
 if (exec 3<>"/dev/tcp/127.0.0.1/50051") 2>/dev/null; then
@@ -256,7 +255,7 @@ else
       fail "access token 验签通过且 sub/username 正确" "err=$(verify_jwt "${ACCESS}" "${GANRAG_JWT_SECRET}" "${USER_ID}" "${UNAME}" 2>&1 | tail -1)"
     fi
   else
-    fail "access token 验签（缺少 GANRAG_JWT_SECRET）" "service/user/.env 未配置"
+    fail "access token 验签（缺少 GANRAG_JWT_SECRET）" "仓库根 .env 未配置"
   fi
 fi
 

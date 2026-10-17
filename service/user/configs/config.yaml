@@ -4,6 +4,7 @@
 #   GANRAG_SERVER_PORT=50051
 #   GANRAG_DATABASE_PASSWORD=xxx     # 数据库密码（建议不落配置文件）
 #   GANRAG_DATABASE_HOST=ganrag-mysql # 容器网络内用容器名访问
+#   GANRAG_REDIS_PASSWORD=xxx        # Redis 访问密码
 #   GANRAG_JWT_SECRET=xxx            # 必填：JWT 签发密钥
 
 server:
@@ -20,6 +21,19 @@ database:
   max_idle_conns: 5
   conn_max_lifetime: "30m"
   auto_migrate: true      # 启动时执行迁移（失败拒绝启动）
+
+redis:
+  host: "127.0.0.1"
+  port: 6379
+  password: ""            # 建议用 GANRAG_REDIS_PASSWORD 环境变量覆盖，不落配置文件
+  db: 0                   # 邮箱验证码等（key 规范见根 AGENTS.md「Redis Key 规范」）
+
+mail:
+  host: ""                # SMTP 服务器；为空即 dev 降级（验证码写日志，仅限本地开发）
+  port: 587               # SMTP 端口（587 STARTTLS）
+  username: ""            # SMTP 账号（建议 GANRAG_MAIL_USERNAME 环境变量覆盖）
+  password: ""            # SMTP 密码（建议 GANRAG_MAIL_PASSWORD 环境变量覆盖）
+  from: ""                # 发件人地址（mail.host 已配置时必填）
 
 jwt:
   secret: ""              # 必填，建议 GANRAG_JWT_SECRET 环境变量注入（.env 已 gitignore）

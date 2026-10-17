@@ -12,14 +12,17 @@ import (
 
 	dbpkg "github.com/gangantongxue/GanRAG/pkg/db"
 	"github.com/gangantongxue/GanRAG/pkg/logger"
+	redispkg "github.com/gangantongxue/GanRAG/pkg/redis"
 )
 
 // Config User 服务总配置
 type Config struct {
-	Server   ServerConfig `mapstructure:"server"`   // gRPC 服务配置
-	Database dbpkg.Config `mapstructure:"database"` // MySQL 配置（pkg/db 统一定义与校验）
-	JWT      JWTConfig    `mapstructure:"jwt"`      // JWT 签发配置
-	Log      LogConfig    `mapstructure:"log"`      // 日志配置
+	Server   ServerConfig    `mapstructure:"server"`   // gRPC 服务配置
+	Database dbpkg.Config    `mapstructure:"database"` // MySQL 配置（pkg/db 统一定义与校验）
+	Redis    redispkg.Config `mapstructure:"redis"`    // Redis 配置（邮箱验证码等，pkg/redis 统一定义与校验）
+	JWT      JWTConfig       `mapstructure:"jwt"`      // JWT 签发配置
+	Mail     MailConfig      `mapstructure:"mail"`     // 验证码邮件通道（SMTP）
+	Log      LogConfig       `mapstructure:"log"`      // 日志配置
 }
 
 // ServerConfig gRPC 服务配置
@@ -39,6 +42,18 @@ type JWTConfig struct {
 	Issuer     string        `mapstructure:"issuer"`      // 签发方标识
 	AccessTTL  time.Duration `mapstructure:"access_ttl"`  // access token 有效期（如 15m）
 	RefreshTTL time.Duration `mapstructure:"refresh_ttl"` // refresh token 有效期（如 168h）
+}
+
+// MailConfig 验证码邮件发送通道配置（SMTP）
+//
+// host 为空视为 dev 降级（验证码写日志，仅限本地开发），其余字段此时不校验；
+// 生产必须配置 host / from，凭据建议用 GANRAG_MAIL_* 环境变量覆盖，不落配置文件。
+type MailConfig struct {
+	Host     string `mapstructure:"host"`     // SMTP 服务器（如 smtp.example.com）
+	Port     int    `mapstructure:"port"`     // SMTP 端口（如 587，STARTTLS）
+	Username string `mapstructure:"username"` // SMTP 登录账号
+	Password string `mapstructure:"password"` // SMTP 登录密码
+	From     string `mapstructure:"from"`     // 发件人地址
 }
 
 // LogConfig 日志配置
@@ -61,6 +76,21 @@ func (c *Config) Validate() error {
 	// 数据库配置由 pkg/db 统一校验（必填项、库名合法性等）
 	if err := c.Database.Validate(); err != nil {
 		return err
+	}
+
+	// Redis 配置由 pkg/redis 统一校验（host/port/db 合法性）
+	if err := c.Redis.Validate(); err != nil {
+		return err
+	}
+
+	// mail：host 为空即 dev 降级（验证码写日志），其余字段此时不校验
+	if c.Mail.Host != "" {
+		if c.Mail.Port <= 0 || c.Mail.Port > 65535 {
+			return fmt.Errorf("mail.port 不合法: %d（应在 1-65535 之间）", c.Mail.Port)
+		}
+		if c.Mail.From == "" {
+			return fmt.Errorf("mail.host 已配置时 mail.from 不能为空")
+		}
 	}
 
 	// JWT：secret 为空直接报错，不做硬编码默认值

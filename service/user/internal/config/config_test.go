@@ -6,9 +6,12 @@ import (
 	"time"
 
 	dbpkg "github.com/gangantongxue/GanRAG/pkg/db"
+	redispkg "github.com/gangantongxue/GanRAG/pkg/redis"
 )
 
 // validConfig 返回一份全合法的基线配置，各用例在其上做单点破坏
+//
+// mail 段留空即 dev 降级（验证码写日志），属合法状态。
 func validConfig() *Config {
 	return &Config{
 		Server: ServerConfig{Host: "0.0.0.0", Port: 50051},
@@ -23,6 +26,7 @@ func validConfig() *Config {
 			ConnMaxLifetime: 30 * time.Minute,
 			AutoMigrate:     true,
 		},
+		Redis: redispkg.Config{Host: "127.0.0.1", Port: 6379, DB: 0},
 		JWT: JWTConfig{
 			Secret:     "jwt-secret",
 			AccessTTL:  15 * time.Minute,
@@ -56,6 +60,10 @@ func TestValidate_Errors(t *testing.T) {
 		{"database.user 为空", func(c *Config) { c.Database.User = "" }, "database.user"},
 		{"database.dbname 含非法字符", func(c *Config) { c.Database.DBName = "ganrag-user" }, "database.dbname"},
 		{"database.port 非法", func(c *Config) { c.Database.Port = -1 }, "database.port"},
+		{"redis.host 为空", func(c *Config) { c.Redis.Host = "" }, "redis.host"},
+		{"redis.port 非法", func(c *Config) { c.Redis.Port = -1 }, "redis.port"},
+		{"mail.host 已配置但 from 为空", func(c *Config) { c.Mail.Host = "smtp.example.com"; c.Mail.Port = 587 }, "mail.from"},
+		{"mail.port 非法", func(c *Config) { c.Mail.Host = "smtp.example.com"; c.Mail.Port = 0; c.Mail.From = "a@b.com" }, "mail.port"},
 		{"jwt.secret 为空", func(c *Config) { c.JWT.Secret = "" }, "jwt.secret"},
 		{"jwt.access_ttl 为 0", func(c *Config) { c.JWT.AccessTTL = 0 }, "jwt.access_ttl"},
 		{"jwt.refresh_ttl 为 0", func(c *Config) { c.JWT.RefreshTTL = 0 }, "jwt.refresh_ttl"},
