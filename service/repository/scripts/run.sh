@@ -85,6 +85,17 @@ RUN_ARGS=(
   --volume "${SERVICE_DIR}/data:/app/data"
   --volume "${SERVICE_DIR}/logs:/app/logs"
 )
+
+# 容器内服务发现：MySQL / Garage 走 compose 容器名；密钥与密码读仓库根 .env
+ROOT_ENV="$(cd "${SERVICE_DIR}/../.." && pwd)/.env"
+if [ -f "${ROOT_ENV}" ]; then
+  RUN_ARGS+=(--env-file "${ROOT_ENV}")
+fi
+RUN_ARGS+=(
+  -e "GANRAG_DATABASE_HOST=ganrag-mysql"
+  -e "GANRAG_DATABASE_PORT=3306"
+  -e "GANRAG_OBJECTSTORE_ENDPOINT=http://garage:3900"
+)
 if [ "${DETACH}" = "true" ]; then
   RUN_ARGS+=(--detach --name "ganrag-${SERVICE}")
 fi

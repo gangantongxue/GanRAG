@@ -177,14 +177,15 @@ Go 标准库结构化日志 + 日志文件轮转：
 
 | 设计项 | 状态 | 阶段 | 详见 |
 |--------|------|------|------|
-| **移除 File Store，直连 Garage（S3）单桶 + gRPC 流式文件访问** | 🔨 实现中（架构迁移已落地 2026-10-17：File Store 已移除、0006 已迁移、Garage 基础设施就绪；协议已定 2026-10-18：上传/下载走 gRPC、Garage 不对外暴露，Presigned 302 降为可选部署形态；实现随「Repository 服务实现」落地） | P1 架构迁移 | [service/repository/docs/architecture.md](../../service/repository/docs/architecture.md)（「对象存储与文件访问」） |
-| Markdown 相对路径解析与 `attachments.relative_path` | 🔨 实现中（`relative_path` 已随 0006 落库 2026-10-17；解析逻辑随 Repository / 前端实现） | P1 架构迁移 | [service/repository/docs/architecture.md](../../service/repository/docs/architecture.md)、[data-model.md](data-model.md)（「架构迁移（移除 File Store 直连 Garage）」） |
+| **移除 File Store，直连 Garage（S3）单桶 + gRPC 流式文件访问** | 🔨 实现中（架构迁移已落地 2026-10-17；Repository 阶段一已实现 2026-10-18：知识库 CRUD + `UploadWhole` + async_tasks outbox；目录/文章/资源/分片上传见 todo） | P1 架构迁移 | [service/repository/docs/architecture.md](../../service/repository/docs/architecture.md)（「对象存储与文件访问」） |
+| Markdown 相对路径解析与 `attachments.relative_path` | 🔨 实现中（`relative_path` 已随 0006 落库 2026-10-17；解析逻辑随 Repository 阶段二 / 前端实现） | P1 架构迁移 | [service/repository/docs/architecture.md](../../service/repository/docs/architecture.md)、[data-model.md](data-model.md)（「架构迁移（移除 File Store 直连 Garage）」） |
+| 公共 async_tasks 失败任务表与 `pkg/asynctask` | ✅ 已实现（2026-10-18：`ganrag_common.async_tasks` + 同事务 outbox；worker/后台接口待做） | P1 | [database.md](database.md)（「ganrag_common」）、[pkg/asynctask/README.md](../../pkg/asynctask/README.md) |
 | 多智能体路由与切换（Decima-small） | 📝 设计定稿，代码未实现 | P1.5 | [service/ai/docs/architecture.md](../../service/ai/docs/architecture.md)（「多智能体路由与切换」） |
 | 上下文压缩（会话级 context + 消息游标 + 隐藏 Agent 提示词） | 📝 设计定稿，代码未实现 | P1.5 | [service/ai/docs/architecture.md](../../service/ai/docs/architecture.md)、[data-model.md](data-model.md)（「上下文压缩」） |
 | 多路召回聚合与 Decima-small 相关性审查 | 📝 设计定稿，代码未实现 | P3 | [service/ai/docs/architecture.md](../../service/ai/docs/architecture.md)（「多路召回聚合与检索权重接入」） |
 | 文档上传（pdf / docx / html → markitdown） | 📝 设计定稿，代码未实现 | P1.5 | 本文「文档转换」、[product.md](product.md)（「文档上传」） |
 | 向量化按模型存储与检索路由 | 📝 设计定稿，代码未实现 | P1.5 | [service/vector-store/docs/architecture.md](../../service/vector-store/docs/architecture.md)（「向量化按模型存储与检索路由」） |
-| chat_sessions.agent / context / context_msg_id 字段 | 🗄 表结构已设计，随 P1 建表落地 | P1 | [data-model.md](data-model.md)（「AI 服务实现」） |
+| chat_sessions.agent / context / context_msg_id 字段 | 🗄 表结构已落地（ai 0001-0005，含 user_xid/kb_xid/context_msg_xid） | P1 | [data-model.md](data-model.md)（「AI 服务实现」） |
 
 ## 决策记录
 
@@ -230,3 +231,5 @@ Go 标准库结构化日志 + 日志文件轮转：
 | 2026-10-17 | `attachments` 增 `relative_path`（article_id + relative_path 唯一），支撑「当前文章 + 相对路径」稳定找回对象；迁移前先 `task db-status`，已应用迁移禁改，新增 up/down 成对 | 用户自定义 Markdown 相对引用需持久化才能渲染期解析；见 docs/data-model.md「ganrag_repository」 |
 | 2026-10-17 | Garage 不启用 s3_web 网页托管展示模块（无 3902 端口）；数据卷 named volume 持久化，garage.toml 经 compose configs 注入、密钥走 .env，首启 `--single-node --default-bucket` 自动建桶与密钥 | 内容只经 S3 API 读取，桶私有无网站托管需求，省一个常驻监听模块；重启/重建容器不丢数据，秘密不入库 |
 | 2026-10-18 | 文件读写改走 gRPC、Garage 不对外暴露：下载 gRPC 流式（Gateway 回写 HTTP body），上传「整段 + 会话式分片」（断点续传 `GetUploadStatus`、三层 sha256 校验：单片收片即验 / 合并前结构校验 / 合并后读回对比声明值）；Presigned URL 302 降为可选部署形态 | 不暴露 Garage 端口换内网封闭，避免桶地址绕过 Gateway；分片断点续传 + 端到端校验保证「Garage 最终字节 == 前端原始文件」；覆盖 2026-10-17「Presigned URL 302」主路径口径；详见 service/repository/docs/architecture.md |
+| 2026-10-18 | **逻辑引用统一带 xid**：同服务引用保留自增 ID + 冗余 `*_xid`，跨服务引用只存目标 xid，对象引用保留 key + `object_xid`；迁移 user 0005 / repository 0008 / ai 0005 | 下游服务拿不到跨服务自增 ID，且「自增 ID 不出服务」；同服务保留数值键不影响现有索引与事务；当前全表为空，一次对齐避免后续返工；见根 AGENTS.md「数据库设计规范」 |
+| 2026-10-18 | **公共失败任务表 `ganrag_common.async_tasks`** + 共享包 `pkg/asynctask`（非独立服务）：`task_type`/`payload` 通用，业务事务内用全限定表名写 outbox，成功 Resolve、失败 Fail | Garage 删除失败可集中重试/后台展示；同事务写入不丢事件；其他服务直接 import，不为单一功能新增服务边界；见 [database.md](database.md)「ganrag_common」 |

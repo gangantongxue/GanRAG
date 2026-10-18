@@ -28,7 +28,9 @@ func newUserFollow(db *gorm.DB, opts ...gen.DOOption) userFollow {
 	tableName := _userFollow.userFollowDo.TableName()
 	_userFollow.ALL = field.NewAsterisk(tableName)
 	_userFollow.FollowerID = field.NewInt64(tableName, "follower_id")
+	_userFollow.FollowerXid = field.NewString(tableName, "follower_xid")
 	_userFollow.FolloweeID = field.NewInt64(tableName, "followee_id")
+	_userFollow.FolloweeXid = field.NewString(tableName, "followee_xid")
 	_userFollow.CreatedAt = field.NewTime(tableName, "created_at")
 
 	_userFollow.fillFieldMap()
@@ -39,10 +41,12 @@ func newUserFollow(db *gorm.DB, opts ...gen.DOOption) userFollow {
 type userFollow struct {
 	userFollowDo userFollowDo
 
-	ALL        field.Asterisk
-	FollowerID field.Int64
-	FolloweeID field.Int64
-	CreatedAt  field.Time
+	ALL         field.Asterisk
+	FollowerID  field.Int64
+	FollowerXid field.String // 关注者 usr_<xid> 全串（同服务冗余）
+	FolloweeID  field.Int64
+	FolloweeXid field.String // 被关注者 usr_<xid> 全串（同服务冗余）
+	CreatedAt   field.Time
 
 	fieldMap map[string]field.Expr
 }
@@ -60,7 +64,9 @@ func (u userFollow) As(alias string) *userFollow {
 func (u *userFollow) updateTableName(table string) *userFollow {
 	u.ALL = field.NewAsterisk(table)
 	u.FollowerID = field.NewInt64(table, "follower_id")
+	u.FollowerXid = field.NewString(table, "follower_xid")
 	u.FolloweeID = field.NewInt64(table, "followee_id")
+	u.FolloweeXid = field.NewString(table, "followee_xid")
 	u.CreatedAt = field.NewTime(table, "created_at")
 
 	u.fillFieldMap()
@@ -88,9 +94,11 @@ func (u *userFollow) GetFieldByName(fieldName string) (field.OrderExpr, bool) {
 }
 
 func (u *userFollow) fillFieldMap() {
-	u.fieldMap = make(map[string]field.Expr, 3)
+	u.fieldMap = make(map[string]field.Expr, 5)
 	u.fieldMap["follower_id"] = u.FollowerID
+	u.fieldMap["follower_xid"] = u.FollowerXid
 	u.fieldMap["followee_id"] = u.FolloweeID
+	u.fieldMap["followee_xid"] = u.FolloweeXid
 	u.fieldMap["created_at"] = u.CreatedAt
 }
 

@@ -30,7 +30,9 @@ func newDirectory(db *gorm.DB, opts ...gen.DOOption) directory {
 	_directory.ID = field.NewInt64(tableName, "id")
 	_directory.Xid = field.NewString(tableName, "xid")
 	_directory.KbID = field.NewInt64(tableName, "kb_id")
+	_directory.KbXid = field.NewString(tableName, "kb_xid")
 	_directory.ParentID = field.NewInt64(tableName, "parent_id")
+	_directory.ParentXid = field.NewString(tableName, "parent_xid")
 	_directory.Name = field.NewString(tableName, "name")
 	_directory.CreatedAt = field.NewTime(tableName, "created_at")
 	_directory.UpdatedAt = field.NewTime(tableName, "updated_at")
@@ -47,7 +49,9 @@ type directory struct {
 	ID        field.Int64
 	Xid       field.String // 业务主键，形如 dir_<xid>（pkg/eid），对外标识
 	KbID      field.Int64
+	KbXid     field.String // 知识库 kb_<xid> 全串（同服务冗余）
 	ParentID  field.Int64
+	ParentXid field.String // 父目录 dir_<xid> 全串；空串=根（同服务冗余）
 	Name      field.String
 	CreatedAt field.Time
 	UpdatedAt field.Time
@@ -70,7 +74,9 @@ func (d *directory) updateTableName(table string) *directory {
 	d.ID = field.NewInt64(table, "id")
 	d.Xid = field.NewString(table, "xid")
 	d.KbID = field.NewInt64(table, "kb_id")
+	d.KbXid = field.NewString(table, "kb_xid")
 	d.ParentID = field.NewInt64(table, "parent_id")
+	d.ParentXid = field.NewString(table, "parent_xid")
 	d.Name = field.NewString(table, "name")
 	d.CreatedAt = field.NewTime(table, "created_at")
 	d.UpdatedAt = field.NewTime(table, "updated_at")
@@ -100,11 +106,13 @@ func (d *directory) GetFieldByName(fieldName string) (field.OrderExpr, bool) {
 }
 
 func (d *directory) fillFieldMap() {
-	d.fieldMap = make(map[string]field.Expr, 7)
+	d.fieldMap = make(map[string]field.Expr, 9)
 	d.fieldMap["id"] = d.ID
 	d.fieldMap["xid"] = d.Xid
 	d.fieldMap["kb_id"] = d.KbID
+	d.fieldMap["kb_xid"] = d.KbXid
 	d.fieldMap["parent_id"] = d.ParentID
+	d.fieldMap["parent_xid"] = d.ParentXid
 	d.fieldMap["name"] = d.Name
 	d.fieldMap["created_at"] = d.CreatedAt
 	d.fieldMap["updated_at"] = d.UpdatedAt

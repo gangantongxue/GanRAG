@@ -15,7 +15,9 @@ type Directory struct {
 	ID        int64     `gorm:"column:id;primaryKey;autoIncrement:true" json:"id"`
 	Xid       string    `gorm:"column:xid;not null;comment:业务主键，形如 dir_<xid>（pkg/eid），对外标识" json:"xid"` // 业务主键，形如 dir_<xid>（pkg/eid），对外标识
 	KbID      int64     `gorm:"column:kb_id;not null" json:"kb_id"`
+	KbXid     string    `gorm:"column:kb_xid;not null;comment:知识库 kb_<xid> 全串（同服务冗余）" json:"kb_xid"` // 知识库 kb_<xid> 全串（同服务冗余）
 	ParentID  int64     `gorm:"column:parent_id;not null" json:"parent_id"`
+	ParentXid string    `gorm:"column:parent_xid;not null;comment:父目录 dir_<xid> 全串；空串=根（同服务冗余）" json:"parent_xid"` // 父目录 dir_<xid> 全串；空串=根（同服务冗余）
 	Name      string    `gorm:"column:name;not null" json:"name"`
 	CreatedAt time.Time `gorm:"column:created_at;not null;default:CURRENT_TIMESTAMP" json:"created_at"`
 	UpdatedAt time.Time `gorm:"column:updated_at;not null;default:CURRENT_TIMESTAMP" json:"updated_at"`

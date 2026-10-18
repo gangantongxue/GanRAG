@@ -15,6 +15,7 @@ type Session struct {
 	ID           int64      `gorm:"column:id;primaryKey;autoIncrement:true" json:"id"`
 	Xid          string     `gorm:"column:xid;not null;comment:业务主键，形如 ses_<xid>（pkg/eid），对外标识（设备管理接口用）" json:"xid"` // 业务主键，形如 ses_<xid>（pkg/eid），对外标识（设备管理接口用）
 	UserID       int64      `gorm:"column:user_id;not null" json:"user_id"`
+	UserXid      string     `gorm:"column:user_xid;not null;comment:用户 usr_<xid> 全串（同服务冗余）" json:"user_xid"` // 用户 usr_<xid> 全串（同服务冗余）
 	DeviceID     string     `gorm:"column:device_id;not null" json:"device_id"`
 	DeviceInfo   string     `gorm:"column:device_info;not null" json:"device_info"`
 	TokenHash    string     `gorm:"column:token_hash;not null" json:"token_hash"`

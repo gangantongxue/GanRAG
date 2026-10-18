@@ -21,7 +21,7 @@ var (
 	Attachment     *attachment
 	Directory      *directory
 	KbUserRelation *kbUserRelation
-	KnowledgeBasis *knowledgeBasis
+	KnowledgeBase  *knowledgeBase
 )
 
 func SetDefault(db *gorm.DB, opts ...gen.DOOption) {
@@ -30,7 +30,7 @@ func SetDefault(db *gorm.DB, opts ...gen.DOOption) {
 	Attachment = &Q.Attachment
 	Directory = &Q.Directory
 	KbUserRelation = &Q.KbUserRelation
-	KnowledgeBasis = &Q.KnowledgeBasis
+	KnowledgeBase = &Q.KnowledgeBase
 }
 
 func Use(db *gorm.DB, opts ...gen.DOOption) *Query {
@@ -40,7 +40,7 @@ func Use(db *gorm.DB, opts ...gen.DOOption) *Query {
 		Attachment:     newAttachment(db, opts...),
 		Directory:      newDirectory(db, opts...),
 		KbUserRelation: newKbUserRelation(db, opts...),
-		KnowledgeBasis: newKnowledgeBasis(db, opts...),
+		KnowledgeBase:  newKnowledgeBase(db, opts...),
 	}
 }
 
@@ -51,7 +51,7 @@ type Query struct {
 	Attachment     attachment
 	Directory      directory
 	KbUserRelation kbUserRelation
-	KnowledgeBasis knowledgeBasis
+	KnowledgeBase  knowledgeBase
 }
 
 func (q *Query) Available() bool { return q.db != nil }
@@ -65,7 +65,7 @@ func (q *Query) clone(db *gorm.DB) *Query {
 		Attachment:     q.Attachment.clone(db),
 		Directory:      q.Directory.clone(db),
 		KbUserRelation: q.KbUserRelation.clone(db),
-		KnowledgeBasis: q.KnowledgeBasis.clone(db),
+		KnowledgeBase:  q.KnowledgeBase.clone(db),
 	}
 }
 
@@ -84,7 +84,7 @@ func (q *Query) ReplaceDB(db *gorm.DB) *Query {
 		Attachment:     q.Attachment.replaceDB(db),
 		Directory:      q.Directory.replaceDB(db),
 		KbUserRelation: q.KbUserRelation.replaceDB(db),
-		KnowledgeBasis: q.KnowledgeBasis.replaceDB(db),
+		KnowledgeBase:  q.KnowledgeBase.replaceDB(db),
 	}
 }
 
@@ -93,7 +93,7 @@ type queryCtx struct {
 	Attachment     *attachmentDo
 	Directory      *directoryDo
 	KbUserRelation *kbUserRelationDo
-	KnowledgeBasis *knowledgeBasisDo
+	KnowledgeBase  *knowledgeBaseDo
 }
 
 func (q *Query) WithContext(ctx context.Context) *queryCtx {
@@ -102,7 +102,7 @@ func (q *Query) WithContext(ctx context.Context) *queryCtx {
 		Attachment:     q.Attachment.WithContext(ctx),
 		Directory:      q.Directory.WithContext(ctx),
 		KbUserRelation: q.KbUserRelation.WithContext(ctx),
-		KnowledgeBasis: q.KnowledgeBasis.WithContext(ctx),
+		KnowledgeBase:  q.KnowledgeBase.WithContext(ctx),
 	}
 }
 

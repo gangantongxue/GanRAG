@@ -17,6 +17,7 @@ RAG（检索增强生成）是实现「基于用户自己的知识回答问题�
 ├── docs/                 # 项目级架构文档
 ├── pkg/                  # 跨服务共享包
 │   ├── config、logger/   # 配置与日志
+│   ├── asynctask/        # 公共 async_tasks（ganrag_common）共享存储
 │   └── db/               # 数据库基础设施：SQL 迁移、同步任务、gorm gen 生成的 model/query
 ├── scripts/              # 跨服务公共脚本（Proto 生成、MySQL 初始化授权）
 ├── service/              # 各微服务（每个服务含 Taskfile、Dockerfile、独立 scripts/）

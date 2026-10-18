@@ -171,7 +171,7 @@ func (h *Handler) Login(ctx context.Context, req *userv1.LoginRequest) (*userv1.
 		deviceID = eid.New(eid.Device)
 	}
 	deviceInfo := truncateDeviceInfo(req.DeviceInfo)
-	if err := h.st.UpsertSession(ctx, u.ID, deviceID, deviceInfo,
+	if err := h.st.UpsertSession(ctx, u.ID, u.Xid, deviceID, deviceInfo,
 		auth.HashRefreshToken(pair.refresh), time.Now().Add(h.jwt.RefreshTTL)); err != nil {
 		return nil, errcode.Status(h.log, "Login/建立会话", err)
 	}

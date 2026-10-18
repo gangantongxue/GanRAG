@@ -4,7 +4,7 @@
 
 Repository 服务是知识库、目录树、文章、附件的业务边界，也是**对象存储（Garage，S3 协议）的唯一直接访问方**。前端不接触 S3 凭证，Gateway 不持有 S3 凭证，二者都通过 Repository 完成文件的权限校验与读取授权。
 
-> **落地状态**：架构迁移已落地（2026-10-17）——File Store 已移除、`attachments.relative_path` 已随迁移 0006 落库、Garage 基础设施就绪（compose 编排、自动建桶与密钥、数据卷持久化）；**接口协议已定（2026-10-18，[api/proto/repository/v1/repository.proto](../../../api/proto/repository/v1/repository.proto)）**：读写均走 gRPC、Garage 不对外暴露（原 Presigned 302 主路径降为可选部署形态）；**Garage 读写与接口实现随「Repository 服务实现」落地**。跟踪见 [docs/todo.md](../../../docs/todo.md)。
+> **落地状态**：架构迁移已落地（2026-10-17）——File Store 已移除、`attachments.relative_path` 已随迁移 0006 落库、Garage 基础设施就绪（compose 编排、自动建桶与密钥、数据卷持久化）；接口协议已定（2026-10-18，[api/proto/repository/v1/repository.proto](../../../api/proto/repository/v1/repository.proto)）；**阶段一已实现（2026-10-18）：知识库 CRUD + `UploadWhole` + 删除走公共 `async_tasks` outbox**；目录树、文章、资源流式读取、分片上传随后续阶段落地。跟踪见 [docs/todo.md](../../../docs/todo.md)。
 
 ## 对象存储与文件访问（P1 核心，架构迁移最高优先级）
 
@@ -60,7 +60,9 @@ o/<obj_xid>
 | 字段 | 含义 |
 |------|------|
 | `articles.content_key` | 正文 md 对象 key（如 `o/abc123...`） |
+| `articles.content_object_xid` | 正文对象 `obj_<xid>`（对象引用，不解析 key） |
 | `attachments.file_key` | 附件对象 key（如 `o/def456...`） |
+| `attachments.object_xid` | 附件对象 `obj_<xid>`（对象引用） |
 | `attachments.original_name` | 原始文件名（仅展示用，不参与寻址） |
 | `attachments.kind` | 1 文章源文件（pdf/docx/html 原文）/ 2 Markdown 引用的文件或图片（仅表示业务生命周期，不再表示存储目录） |
 
@@ -123,6 +125,10 @@ Repository 按「当前文章 + 规范化 relative_path」查 `attachments` 得�
 
 ```sql
 relative_path VARCHAR(500) NOT NULL,        -- 规范化后的相对路径，如 assets/logo.png
+object_xid VARCHAR(32) NOT NULL,            -- 对象 obj_<xid>（对象引用）
+article_xid VARCHAR(32) NOT NULL,           -- 文章 art_<xid>（同服务冗余）
+kb_xid VARCHAR(32) NOT NULL,                -- 知识库 kb_<xid>（同服务冗余）
+created_by_xid VARCHAR(32) NOT NULL,        -- 上传者 usr_<xid>（跨服务引用）
 UNIQUE KEY uk_attachments_article_path (article_id, relative_path)
 ```
 
@@ -143,6 +149,17 @@ UNIQUE KEY uk_attachments_article_path (article_id, relative_path)
 
 **删除文章/目录**：应用层事务内级联删 `attachments` 行 + Garage 对象（无物理外键，引用完整性由应用层保证）。
 
+### 对象清理任务（公共 `async_tasks` outbox）
+
+Garage 删除失败不能只写日志。统一使用公共 schema `ganrag_common.async_tasks`（共享包 `pkg/asynctask`）：
+
+1. 删除知识库/目录/文章的事务内，先按 `garage_object_delete` + `dedupe_key=object_xid` upsert 任务行（`status=0`）。
+2. 事务提交后，逐对象调用 Garage `DeleteObject`。
+3. 成功 → `status=1`、`resolved_at`；失败 → `attempts+1`、`last_error`，保持 `status=0`，后续 worker/后台集中处理。
+4. 任务写入使用全限定表名 `ganrag_common.async_tasks`，与业务行同事务；进程崩溃时任务仍保留，不丢失败事件。
+
+`task_type` / `payload` / `source_service` 为通用字段，其他服务后续直接 import `pkg/asynctask` 上报，不新增独立服务或表。
+
 ## 相关配置（Repository 持有）
 
 | 配置 | 示例 | 说明 |
@@ -153,7 +170,8 @@ UNIQUE KEY uk_attachments_article_path (article_id, relative_path)
 | `objectstore.access_key_id` | 环境变量注入 | 不入库、不进前端 |
 | `objectstore.secret_access_key` | 环境变量注入 | 不入库、不进前端 |
 | `objectstore.force_path_style` | `true` | Garage 需 Path Style |
-| `objectstore.presign_ttl` | `60s` | Presigned URL 有效期（可选 Presigned 形态用） |
+| `objectstore.timeout` | `30s` | 单次 S3 调用超时 |
+| `upload.whole_max_size` | `2097152` | 整段上传上限（2MB），超过走分片 |
 
 S3 调用统一带 context 超时；写入、删除、Head、List 均有限制；错误映射统一走 `pkg/errcode`（S3 NoSuchKey → NotFound 等）。
 
@@ -188,5 +206,8 @@ S3 调用统一带 context 超时；写入、删除、Head、List 均有限制�
 
 - 「架构迁移（移除 File Store 直连 Garage）」（✅已完成 2026-10-17）
 - 「Repository 服务协议（proto）定义」（✅已完成 2026-10-18，[api/proto/repository/v1/repository.proto](../../../api/proto/repository/v1/repository.proto)）
-- 「Repository 服务实现」
+- 「公共 async_tasks 与服务失败记录」（✅已完成 2026-10-18）
+- 「Repository 服务实现（阶段一）」（✅已完成 2026-10-18）
+- 「Repository 服务实现（阶段二：目录树/文章/资源/互链）」（⬜待处理）
+- 「Repository 服务实现（阶段三：分片上传）」（⬜待处理）
 - 「Repository 服务架构文档补齐」（✅已完成，本文件即补齐内容）

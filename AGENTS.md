@@ -41,6 +41,7 @@ AI 不得：
 - **禁止使用物理外键**（`FOREIGN KEY` / `REFERENCES` / 级联约束），跨表、跨 schema 引用一律**逻辑引用**（只存目标 ID，注释标明引用目标），不建 DB 级约束
 - 引用完整性与级联删除由**应用层**保证（删除事务内自行清理关联行）；历史迁移中已存在的物理外键登记 [docs/fix.md](docs/fix.md) 修复移除，不直接改已应用的迁移文件
 - **内容存储口径**：文章 / 文档类大对象内容**不入 MySQL**（存 Garage 对象存储，MySQL 只存对象 key `o/<obj_xid>`）；聊天消息、思考过程、工具结果、模型上下文等**交易型短文本可入 MySQL**（LONGTEXT / JSON）
+- **共享基础设施 schema**：`ganrag_common` 是唯一例外，只存运维/失败任务类数据（`async_tasks`），不存业务领域数据；所有服务统一通过 `pkg/asynctask` 访问，禁止在业务代码中直接写该 schema 的 SQL；新增共享表须登记到 `pkg/db/gen` 并经迁移统一管理
 
 ## Redis Key 规范
 
@@ -51,7 +52,10 @@ AI 不得：
 
 - **需要对外展示的实体（表）必须增加业务主键** `xid VARCHAR(32)`（公共包 `pkg/eid` 生成 `<前缀>_<20位XID>` 全串，前缀 3 字母小写按实体类型区分，如 `usr_`/`art_`；底层 `github.com/rs/xid`，**禁止直接用裸 xid 或自建生成逻辑**），建 UNIQUE 索引；对外接口、URL、前端一律只用 xid 全串，数据库自增 id 不出服务（入参 xid 在服务内换自增 id）；入参校验用 `eid.Valid` / `eid.Match`（防跨实体串类型），库内存全串
 - 不需要对外展示的表可只用数据库自增主键
-- 表间逻辑引用（关联字段）一律存**数据库自增主键**（BIGINT），不存 xid
+- 表间逻辑引用统一带 xid：
+  - **同服务内**引用：存目标自增主键（BIGINT），并冗余目标 xid（`*_xid`），两者同事务写入；
+  - **跨服务**引用：只存目标 xid（`*_xid`），不存自增 ID（自增 ID 不出服务）；
+  - 对象引用：保留对象 key，同时冗余 `*_object_xid` / `object_xid`，不靠解析 key 取 xid。
 
 ## 待完成事项管理（docs/fix.md / docs/todo.md）
 

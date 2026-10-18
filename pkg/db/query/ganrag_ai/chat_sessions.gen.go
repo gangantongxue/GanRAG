@@ -29,11 +29,12 @@ func newChatSession(db *gorm.DB, opts ...gen.DOOption) chatSession {
 	_chatSession.ALL = field.NewAsterisk(tableName)
 	_chatSession.ID = field.NewInt64(tableName, "id")
 	_chatSession.Xid = field.NewString(tableName, "xid")
-	_chatSession.UserID = field.NewInt64(tableName, "user_id")
-	_chatSession.KbID = field.NewInt64(tableName, "kb_id")
+	_chatSession.UserXid = field.NewString(tableName, "user_xid")
+	_chatSession.KbXid = field.NewString(tableName, "kb_xid")
 	_chatSession.Agent = field.NewString(tableName, "agent")
 	_chatSession.Context = field.NewString(tableName, "context")
 	_chatSession.ContextMsgID = field.NewInt64(tableName, "context_msg_id")
+	_chatSession.ContextMsgXid = field.NewString(tableName, "context_msg_xid")
 	_chatSession.Title = field.NewString(tableName, "title")
 	_chatSession.CreatedAt = field.NewTime(tableName, "created_at")
 	_chatSession.UpdatedAt = field.NewTime(tableName, "updated_at")
@@ -50,11 +51,12 @@ type chatSession struct {
 	ALL           field.Asterisk
 	ID            field.Int64
 	Xid           field.String // 业务主键，形如 chs_<xid>（pkg/eid），对外标识
-	UserID        field.Int64
-	KbID          field.Int64
+	UserXid       field.String // 用户 usr_<xid> 全串（跨服务逻辑引用）
+	KbXid         field.String // 知识库 kb_<xid> 全串；空串=全局（跨服务逻辑引用）
 	Agent         field.String
 	Context       field.String
 	ContextMsgID  field.Int64
+	ContextMsgXid field.String // 上下文游标消息 msg_<xid> 全串（同服务冗余）
 	Title         field.String
 	CreatedAt     field.Time
 	UpdatedAt     field.Time
@@ -77,11 +79,12 @@ func (c *chatSession) updateTableName(table string) *chatSession {
 	c.ALL = field.NewAsterisk(table)
 	c.ID = field.NewInt64(table, "id")
 	c.Xid = field.NewString(table, "xid")
-	c.UserID = field.NewInt64(table, "user_id")
-	c.KbID = field.NewInt64(table, "kb_id")
+	c.UserXid = field.NewString(table, "user_xid")
+	c.KbXid = field.NewString(table, "kb_xid")
 	c.Agent = field.NewString(table, "agent")
 	c.Context = field.NewString(table, "context")
 	c.ContextMsgID = field.NewInt64(table, "context_msg_id")
+	c.ContextMsgXid = field.NewString(table, "context_msg_xid")
 	c.Title = field.NewString(table, "title")
 	c.CreatedAt = field.NewTime(table, "created_at")
 	c.UpdatedAt = field.NewTime(table, "updated_at")
@@ -112,14 +115,15 @@ func (c *chatSession) GetFieldByName(fieldName string) (field.OrderExpr, bool) {
 }
 
 func (c *chatSession) fillFieldMap() {
-	c.fieldMap = make(map[string]field.Expr, 11)
+	c.fieldMap = make(map[string]field.Expr, 12)
 	c.fieldMap["id"] = c.ID
 	c.fieldMap["xid"] = c.Xid
-	c.fieldMap["user_id"] = c.UserID
-	c.fieldMap["kb_id"] = c.KbID
+	c.fieldMap["user_xid"] = c.UserXid
+	c.fieldMap["kb_xid"] = c.KbXid
 	c.fieldMap["agent"] = c.Agent
 	c.fieldMap["context"] = c.Context
 	c.fieldMap["context_msg_id"] = c.ContextMsgID
+	c.fieldMap["context_msg_xid"] = c.ContextMsgXid
 	c.fieldMap["title"] = c.Title
 	c.fieldMap["created_at"] = c.CreatedAt
 	c.fieldMap["updated_at"] = c.UpdatedAt

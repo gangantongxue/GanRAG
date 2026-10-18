@@ -13,8 +13,9 @@ MySQL 单实例（根目录 compose 编排），**每个服务一个 schema、�
 | `ganrag_user` | User 服务 | `users`、`sessions`、`user_follows` | `pkg/db/migrations/ganrag_user/` |
 | `ganrag_repository` | Repository 服务 | `knowledge_bases`、`directories`、`articles`、`attachments`、`kb_user_relations` | `pkg/db/migrations/ganrag_repository/` |
 | `ganrag_ai` | AI 服务 | `chat_sessions`、`chat_messages`、`chat_message_parts` | `pkg/db/migrations/ganrag_ai/` |
+| `ganrag_common` | 共享基础设施（经 `pkg/asynctask`） | `async_tasks` | `pkg/db/migrations/ganrag_common/` |
 
-**引用规则**：表间关联（无论同 schema 还是跨 schema）**一律逻辑引用，禁止物理外键**（见根 AGENTS.md「数据库设计规范」）——外键会把迁移耦合成必须按序执行，违背服务独立。引用完整性与级联删除由应用层保证；跨服务查询走 gRPC，不做跨 schema JOIN。
+**引用规则**：表间关联（无论同 schema 还是跨 schema）**一律逻辑引用，禁止物理外键**（见根 AGENTS.md「数据库设计规范」）——外键会把迁移耦合成必须按序执行，违背服务独立。引用完整性与级联删除由应用层保证；跨服务查询走 gRPC，不做跨 schema JOIN。**逻辑引用统一带 xid**：同服务引用存自增 id + 冗余 `*_xid`；跨服务引用只存目标 xid；对象引用保留 key + `object_xid`。`ganrag_common` 是唯一共享 schema，只存 `async_tasks`，业务服务通过 `pkg/asynctask` 访问。
 
 ## ER 总览
 
@@ -23,7 +24,7 @@ ganrag_user                          ganrag_repository
 ┌────────────┐                       ┌─────────────────────┐
 │   users    │◄──┐                   │  knowledge_bases    │
 ├────────────┤   │                   ├─────────────────────┤
-│ id         │   │ owner_id          │ id / xid / owner_id │
+│ id         │   │ owner_xid        │ id / xid / owner_xid │
 │ email      │   ├───┐               │ name / visibility │
 │ password_hash     │               │ article/star_count  │
 │ ...        │   │   │               └──┬───────┬───────┬──┘
@@ -35,7 +36,7 @@ ganrag_user                          ganrag_repository
 │user_follows│   │   │ relations      │  │   ├─────────────┤
 ├────────────┤   │   ├────────────────┤  │   │ id / xid    │
 │ follower_id│   │   │ kb_id          │  │   │ kb_id/parent│
-│ followee_id│   │   │ user_id (逻辑)  │  │   │ name        │
+│ followee_id│   │   │ user_xid (xid) │  │   │ name        │
 └────────────┘   │   │ role / starred │  │   └─────────────┘
                  │   └────────────────┘  │
                  │                       │ ┌────────────────┐
@@ -45,7 +46,8 @@ ganrag_user                          ganrag_repository
                  │                         │ kb_id / dir_id │
                  │                         │ type / title   │
                  │                         │ content_key ───┼─▶ Garage (S3)
-                 │                         │ created_by     │   key: o/<obj_xid>
+                 │                         │ content_obj_xid│   key: o/<obj_xid>
+                 │                         │ created_by_xid │
                  │                         └───────┬────────┘
                  │                                 │
                  │                         ┌───────┴──────────┐
@@ -58,9 +60,18 @@ ganrag_ai
 ┌─────────────────┐   ┌──────────────────┐   ┌──────────────────┐
 │ chat_sessions   │──▶│ chat_messages    │──▶│chat_message_parts│
 ├─────────────────┤   ├──────────────────┤   ├──────────────────┤
-│ user_id / kb_id │   │ role / content   │   │ step / seq / type│
+│ user_xid / kb_xid│   │ role / content   │   │ step / seq / type│
 │ agent / context │   │ agent            │   │ content / meta   │
 └─────────────────┘   └──────────────────┘   └──────────────────┘
+
+ganrag_common（共享基础设施，pkg/asynctask）
+┌──────────────────────────────────────────┐
+│ async_tasks                              │
+├──────────────────────────────────────────┤
+│ xid / task_type / source_service         │
+│ dedupe_key / payload / status / attempts │
+│ requested_by_xid / last_error            │
+└──────────────────────────────────────────┘
 ```
 
 ## 关键设计决策
@@ -69,9 +80,9 @@ ganrag_ai
 |--------|------|------|
 | 文章内容存储 | 正文与转换结果一律存 **Garage（S3）**（`articles.content_key`，对象 key 统一 `o/<obj_xid>`），MySQL 只存元数据与对象 key | 内容是大对象不占 MySQL 行；重建索引 / 换模型直接读对象存储，不重跑 markitdown |
 | 引用方式 | 图片与互链以 **Markdown 链接**形式存在于正文（稳定 URL 指向 xid），**不建关系表** | 关联即正文内容本身；URL 按 xid，文章移动 / 改名不打断引用；断链渲染时标记 |
-| 业务主键 | 对外展示实体一律加 `xid VARCHAR(32)`（`pkg/eid` 生成 `<前缀>_<xid>` 全串，前缀按实体类型），对外接口/URL/前端只用 xid 全串；逻辑引用存自增 id | 自增 id 不出服务，防遍历枚举；见根 AGENTS.md「业务主键（XID）规范」 |
+| 业务主键 | 对外展示实体一律加 `xid VARCHAR(32)`（`pkg/eid` 生成 `<前缀>_<xid>` 全串），对外接口/URL/前端只用 xid 全串；同服务引用存自增 id + 冗余 `*_xid`，跨服务引用只存 xid | 自增 id 不出服务，防遍历枚举；跨服务下游拿不到自增 id；见根 AGENTS.md「业务主键（XID）规范」 |
 | 改写时机 | md 保存时解析相对路径 → 绑定附件/目标文章 → 改写为稳定 URL | 渲染端零解析成本；解析失败的链接保留原文，渲染时标记失效 |
-| 根节点表示 | `parent_id` / `dir_id` / `kb_id`（会话）用 **0 表示根**，不用 NULL | MySQL 唯一索引对 NULL 不去重，0 值让 `UNIQUE(kb_id, parent_id, name)` 对根目录同样生效 |
+| 根节点表示 | `parent_id` / `dir_id` 用 **0 表示根**，`parent_xid` / `dir_xid` 用空串；`chat_sessions.kb_xid=''` 表示全局，不用 NULL | MySQL 唯一索引对 NULL 不去重，0 值让 `UNIQUE(kb_id, parent_id, name)` 对根目录同样生效 |
 | 标题约束 | 文章标题**不设唯一** | 引用靠 xid 不靠标题；同目录同名仅是编辑体验问题，由应用层提示 |
 | 计数冗余 | `knowledge_bases` 冗余 `article_count`、`star_count` | 列表页高频展示，避免每行 COUNT；同事务内增减 |
 | 登录标识 | `users.email` 唯一（登录/找回密码），`username` 仅展示名可重复 | 身份语义归邮箱；展示名无唯一约束避免改名冲突 |
@@ -79,10 +90,11 @@ ganrag_ai
 | 验证码存储 | 邮箱验证码存 Redis（TTL、一次性、发送限频），不建表 | 过期与一次性语义由 Redis 天然承担，见 [service/user/docs/architecture.md](../service/user/docs/architecture.md) |
 | Redis Key 规范 | `<服务短名>:<域>:<标识>`（如 `user:email_code:register:<email>`） | 分层命名空间防撞名，服务短名与目录名一致；见根 AGENTS.md「Redis Key 规范」 |
 | 附件清理 | 附件直接挂 `article_id`（`kind` 区分源文件 / 内嵌图片），保存时按正文链接重建 kind=2 并清孤儿 | 少一张绑定表；附件单文章独占，清理路径单一 |
-| 关系单表 | `kb_user_relations` 单表承载成员（role）与收藏（starred）；owner 由 `knowledge_bases.owner_id` 表示，不入表 | 与「关系状态」口径对齐，少两张表；避免两处真相 |
+| 关系单表 | `kb_user_relations` 单表承载成员（role）与收藏（starred）；owner 由 `knowledge_bases.owner_xid` 表示，不入表 | 与「关系状态」口径对齐，少两张表；避免两处真相 |
 | 权重不入库 | 关系状态存库，权重映射由 AI 服务配置持有 | 权重是排序策略、需频繁调参，不是业务事实；存库会把调优变成改数据 |
 | 物理外键 | 全局禁止，一律逻辑引用（应用层保证完整性与级联删除） | 迁移独立、可并行开发；规则见根 AGENTS.md「数据库设计规范」 |
-| 会话范围 | `chat_sessions.kb_id = 0` 表示全局 | 与根节点约定一致 |
+| 会话范围 | `chat_sessions.kb_xid = ''` 表示全局 | 与根节点约定一致；跨服务只存知识库 xid |
+| 失败任务 | 公共 `ganrag_common.async_tasks` + `pkg/asynctask`，业务事务内同事务写 outbox；`task_type` + `payload` 通用，其他服务直接 import | 失败可集中重试/后台展示；不新增独立服务；见 [database.md](database.md)「ganrag_common」 |
 | 聊天记录存储 | 消息信封 + 全量步骤两层（`chat_messages` + `chat_message_parts`）；步骤 type/meta 对齐 Vercel AI SDK `UIMessage` part 模型，payload 原样存 | 每步（思考/工具/来源）全量可存可展示，扩展展示零 DDL；历史无损重组为 `useChat(initialMessages)` |
 | 内容入 MySQL 口径 | 文章/文档大对象不入 MySQL（存 Garage 对象存储，只存 key）；聊天消息、思考、工具结果、模型上下文等**交易型短文本入 MySQL** | 前者是文档大对象、后者高频按序读写且随事务；见根 AGENTS.md「数据库设计规范」 |
 
@@ -92,7 +104,7 @@ ganrag_ai
 
 ### ganrag_repository（Repository 服务）
 
-> **建表迁移已交付**（2026-10-15 迁移基线重写，`pkg/db/migrations/ganrag_repository/0001-0005`）；服务实现见 [todo.md](todo.md) 「Repository 服务实现」。统一约定补充：对外实体带 `xid VARCHAR(32)` 业务主键（`<前缀>_<xid>` 全串，`pkg/eid`）（见根 AGENTS.md「业务主键（XID）规范」）；完整结构参考见 [database.md](database.md)。
+> **建表迁移已交付**（2026-10-15 基线 + 2026-10-18 引用 xid 对齐，`pkg/db/migrations/ganrag_repository/0001-0008`）；服务实现见 [todo.md](todo.md) 「Repository 服务实现」。统一约定补充：对外实体带 `xid VARCHAR(32)` 业务主键（`<前缀>_<xid>` 全串，`pkg/eid`）；同服务引用冗余 `*_xid`，跨服务引用只存 xid；完整结构参考见 [database.md](database.md)。
 
 #### knowledge_bases 知识库
 
@@ -100,7 +112,7 @@ ganrag_ai
 CREATE TABLE knowledge_bases (
   id            BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
   xid           VARCHAR(32)      NOT NULL,             -- 业务主键 <前缀>_<xid>（pkg/eid），对外标识
-  owner_id      BIGINT UNSIGNED NOT NULL,           -- 逻辑引用 users.id
+  owner_xid     VARCHAR(32)      NOT NULL,           -- 库主 usr_<xid> 全串（跨服务逻辑引用）
   name          VARCHAR(100)  NOT NULL,
   description   VARCHAR(500)  NOT NULL DEFAULT '',
   visibility    TINYINT       NOT NULL DEFAULT 0,   -- 0 私有 1 公开
@@ -110,9 +122,9 @@ CREATE TABLE knowledge_bases (
   updated_at    DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (id),
   UNIQUE KEY uk_kb_xid (xid),
-  UNIQUE KEY uk_kb_owner_name (owner_id, name),     -- 同一 owner 下名称唯一
+  UNIQUE KEY uk_kb_owner_name (owner_xid, name),     -- 同一 owner 下名称唯一
   KEY idx_kb_visibility_updated (visibility, updated_at),  -- 发现页/搜索排序
-  KEY idx_kb_owner (owner_id)
+  KEY idx_kb_owner (owner_xid)
 );
 ```
 
@@ -124,8 +136,10 @@ CREATE TABLE knowledge_bases (
 CREATE TABLE directories (
   id         BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
   xid        VARCHAR(32)      NOT NULL,                -- 业务主键 <前缀>_<xid>（pkg/eid），对外标识
-  kb_id      BIGINT UNSIGNED NOT NULL,              -- 逻辑引用 knowledge_bases.id
-  parent_id  BIGINT UNSIGNED NOT NULL DEFAULT 0,    -- 0 = 根，逻辑引用 directories.id
+  kb_id      BIGINT UNSIGNED NOT NULL,              -- 逻辑引用 knowledge_bases.id（同服务）
+  kb_xid     VARCHAR(32)     NOT NULL DEFAULT '',   -- 知识库 kb_<xid> 全串（同服务冗余）
+  parent_id  BIGINT UNSIGNED NOT NULL DEFAULT 0,    -- 0 = 根，逻辑引用 directories.id（同服务）
+  parent_xid VARCHAR(32)     NOT NULL DEFAULT '',   -- 父目录 dir_<xid> 全串；空串=根（同服务冗余）
   name       VARCHAR(100)    NOT NULL,
   created_at DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -144,12 +158,15 @@ CREATE TABLE directories (
 CREATE TABLE articles (
   id          BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
   xid         VARCHAR(32)      NOT NULL,               -- 业务主键 <前缀>_<xid>（pkg/eid），对外标识
-  kb_id       BIGINT UNSIGNED NOT NULL,             -- 逻辑引用 knowledge_bases.id
-  dir_id      BIGINT UNSIGNED NOT NULL DEFAULT 0,   -- 0 = 根，逻辑引用 directories.id
+  kb_id       BIGINT UNSIGNED NOT NULL,             -- 逻辑引用 knowledge_bases.id（同服务）
+  kb_xid      VARCHAR(32)     NOT NULL DEFAULT '',  -- 知识库 kb_<xid> 全串（同服务冗余）
+  dir_id      BIGINT UNSIGNED NOT NULL DEFAULT 0,   -- 0 = 根，逻辑引用 directories.id（同服务）
+  dir_xid     VARCHAR(32)     NOT NULL DEFAULT '',  -- 目录 dir_<xid> 全串；空串=根（同服务冗余）
   type        TINYINT         NOT NULL,             -- 1 md 2 txt 3 pdf 4 docx 5 html（原始格式）
   title       VARCHAR(200)    NOT NULL,
   content_key VARCHAR(500)    NOT NULL,             -- 正文 md 对象 key（o/<obj_xid>，MySQL 不存内容）
-  created_by  BIGINT UNSIGNED NOT NULL,             -- 逻辑引用 users.id
+  content_object_xid VARCHAR(32) NOT NULL DEFAULT '', -- 正文对象 obj_<xid>
+  created_by_xid VARCHAR(32)  NOT NULL,             -- 创建者 usr_<xid> 全串（跨服务逻辑引用）
   created_at  DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at  DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (id),
@@ -169,16 +186,19 @@ CREATE TABLE articles (
 CREATE TABLE attachments (
   id            BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
   xid           VARCHAR(32)      NOT NULL,             -- 业务主键 <前缀>_<xid>（pkg/eid），对外标识（稳定 URL）
-  kb_id         BIGINT UNSIGNED NOT NULL,           -- 逻辑引用 knowledge_bases.id
-  article_id    BIGINT UNSIGNED NOT NULL,           -- 所属文章，逻辑引用 articles.id
+  kb_id         BIGINT UNSIGNED NOT NULL,           -- 逻辑引用 knowledge_bases.id（同服务）
+  kb_xid        VARCHAR(32)     NOT NULL DEFAULT '',-- 知识库 kb_<xid> 全串（同服务冗余）
+  article_id    BIGINT UNSIGNED NOT NULL,           -- 所属文章，逻辑引用 articles.id（同服务）
+  article_xid   VARCHAR(32)     NOT NULL DEFAULT '',-- 文章 art_<xid> 全串（同服务冗余）
   kind          TINYINT         NOT NULL,           -- 1 源文件（pdf/docx/html 原文，固定绑定） 2 内嵌图片/附件（保存时按正文链接重建）
   file_key      VARCHAR(500)    NOT NULL,           -- 对象 key（o/<obj_xid>，统一单桶）
+  object_xid    VARCHAR(32)     NOT NULL DEFAULT '',-- 对象 obj_<xid>（对象引用）
   relative_path VARCHAR(500)    NOT NULL,           -- 规范化相对路径（如 assets/logo.png），供渲染期解析
   original_name VARCHAR(255)    NOT NULL,           -- 原始文件名（展示用）
   content_type  VARCHAR(100)    NOT NULL,           -- image/png 等
   size          BIGINT UNSIGNED NOT NULL,
   sha256        CHAR(64)        NOT NULL,           -- 完整性校验（不去重，同文件重复上传即多行）
-  created_by    BIGINT UNSIGNED NOT NULL,           -- 逻辑引用 users.id
+  created_by_xid VARCHAR(32)    NOT NULL,           -- 上传者 usr_<xid> 全串（跨服务逻辑引用）
   created_at    DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (id),
   UNIQUE KEY uk_attachments_xid (xid),
@@ -196,14 +216,15 @@ CREATE TABLE attachments (
 
 ```sql
 CREATE TABLE kb_user_relations (
-  kb_id      BIGINT UNSIGNED NOT NULL,              -- 逻辑引用 knowledge_bases.id
-  user_id    BIGINT UNSIGNED NOT NULL,              -- 逻辑引用 users.id
+  kb_id      BIGINT UNSIGNED NOT NULL,              -- 逻辑引用 knowledge_bases.id（同服务）
+  kb_xid     VARCHAR(32)     NOT NULL DEFAULT '',   -- 知识库 kb_<xid> 全串（同服务冗余）
+  user_xid   VARCHAR(32)     NOT NULL,              -- 用户 usr_<xid> 全串（跨服务逻辑引用）
   role       TINYINT         NOT NULL DEFAULT 0,   -- 0 非成员 1 reader 2 editor（owner 不入表）
   starred    TINYINT         NOT NULL DEFAULT 0,   -- 0 未收藏 1 已收藏
   starred_at DATETIME        NULL,                 -- 收藏时间（「我 star 的库」排序）
   created_at DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  PRIMARY KEY (kb_id, user_id),
-  KEY idx_kb_user_relations_user (user_id)         -- 「我是成员的库」「我 star 的库」
+  PRIMARY KEY (kb_id, user_xid),
+  KEY idx_kb_user_relations_user_xid (user_xid)    -- 「我是成员的库」「我 star 的库」
 );
 ```
 
@@ -211,7 +232,7 @@ CREATE TABLE kb_user_relations (
 
 ### ganrag_user（User 服务）
 
-> **建表迁移已交付**（2026-10-15 迁移基线重写，`pkg/db/migrations/ganrag_user/0001-0003`，含 xid）；代码适配见 [todo.md](todo.md) 「users 相关代码适配」 / 「会话模型代码适配」 / 「对外接口 xid」。接口与流程详见 [service/user/docs/architecture.md](../service/user/docs/architecture.md)；完整结构参考见 [database.md](database.md)。
+> **建表迁移已交付**（2026-10-15 基线 + 2026-10-18 引用 xid 对齐，`pkg/db/migrations/ganrag_user/0001-0005`，含 xid）；代码适配见 [todo.md](todo.md) 「users 相关代码适配」 / 「会话模型代码适配」 / 「对外接口 xid」。接口与流程详见 [service/user/docs/architecture.md](../service/user/docs/architecture.md)；完整结构参考见 [database.md](database.md)。
 
 #### users 用户账号
 
@@ -236,7 +257,8 @@ CREATE TABLE users (
 CREATE TABLE sessions (
   id             BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
   xid            VARCHAR(32)      NOT NULL,             -- 业务主键 <前缀>_<xid>（pkg/eid），对外标识（设备管理接口用）
-  user_id        BIGINT UNSIGNED NOT NULL,          -- 逻辑引用 users.id
+  user_id        BIGINT UNSIGNED NOT NULL,          -- 逻辑引用 users.id（同服务）
+  user_xid       VARCHAR(32)      NOT NULL DEFAULT '', -- 用户 usr_<xid> 全串（同服务冗余）
   device_id      VARCHAR(64)  NOT NULL,             -- 设备码（服务端生成/核对，见「设备标识（device_id）口径」）
   device_info    VARCHAR(255) NOT NULL DEFAULT '',  -- 设备信息（UA/平台摘要，设备列表展示）
   token_hash     CHAR(64)     NOT NULL,             -- 当前 refresh token 的 SHA-256，轮换原地更新
@@ -285,8 +307,10 @@ CREATE TABLE sessions (
 
 ```sql
 CREATE TABLE user_follows (                          -- 0003_user_follows
-  follower_id BIGINT UNSIGNED NOT NULL,              -- 逻辑引用 users.id
-  followee_id BIGINT UNSIGNED NOT NULL,              -- 逻辑引用 users.id
+  follower_id BIGINT UNSIGNED NOT NULL,              -- 逻辑引用 users.id（同服务）
+  follower_xid VARCHAR(32)    NOT NULL DEFAULT '',   -- 关注者 usr_<xid> 全串（同服务冗余）
+  followee_id BIGINT UNSIGNED NOT NULL,              -- 逻辑引用 users.id（同服务）
+  followee_xid VARCHAR(32)    NOT NULL DEFAULT '',   -- 被关注者 usr_<xid> 全串（同服务冗余）
   created_at  DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (follower_id, followee_id),
   KEY idx_user_follows_followee (followee_id)        -- 「谁关注了我」
@@ -297,7 +321,7 @@ CREATE TABLE user_follows (                          -- 0003_user_follows
 
 ### ganrag_ai（AI 服务）
 
-> **建表迁移已交付**（2026-10-15 迁移基线重写，`pkg/db/migrations/ganrag_ai/0001-0003`）；AI 服务实现见 [todo.md](todo.md) 「AI 服务实现」。聊天记录按「消息信封 + 全量步骤」两层设计；步骤词表与 payload 对齐 Vercel AI SDK（`@ai-sdk/react` useChat）的 `UIMessage` part 模型，历史消息可直接重组喂给 `useChat(initialMessages)`。完整结构参考见 [database.md](database.md)。
+> **建表迁移已交付**（2026-10-15 基线 + 2026-10-18 引用 xid 对齐，`pkg/db/migrations/ganrag_ai/0001-0005`）；AI 服务实现见 [todo.md](todo.md) 「AI 服务实现」。聊天记录按「消息信封 + 全量步骤」两层设计；步骤词表与 payload 对齐 Vercel AI SDK（`@ai-sdk/react` useChat）的 `UIMessage` part 模型，历史消息可直接重组喂给 `useChat(initialMessages)`。完整结构参考见 [database.md](database.md)。
 
 #### chat_sessions 聊天会话
 
@@ -305,23 +329,24 @@ CREATE TABLE user_follows (                          -- 0003_user_follows
 CREATE TABLE chat_sessions (
   id              BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
   xid             VARCHAR(32)      NOT NULL,             -- 业务主键 <前缀>_<xid>（pkg/eid），对外标识（兼 useChat chatId）
-  user_id         BIGINT UNSIGNED NOT NULL,            -- 逻辑引用 users.id
-  kb_id           BIGINT UNSIGNED NOT NULL DEFAULT 0,  -- 0 = 全局，否则绑定单个知识库
+  user_xid        VARCHAR(32)      NOT NULL,            -- 用户 usr_<xid> 全串（跨服务逻辑引用）
+  kb_xid          VARCHAR(32)     NOT NULL DEFAULT '',  -- 知识库 kb_<xid> 全串；空串=全局（跨服务逻辑引用）
   agent           VARCHAR(32)     NOT NULL DEFAULT '', -- 当前智能体 id（粘性状态，P1.5 多智能体路由用）
   context         LONGTEXT        NULL,                -- AI 内部压缩上下文（含最新 Agent 提示词与摘要）；NULL = 未压缩
   context_msg_id  BIGINT UNSIGNED NOT NULL DEFAULT 0,  -- 拼接游标：消息 id >= 此值接在 context 后进 prompt；0 = 全量
+  context_msg_xid VARCHAR(32)     NOT NULL DEFAULT '', -- 游标消息 msg_<xid> 全串（同服务冗余）
   title           VARCHAR(200)    NOT NULL DEFAULT '', -- 首条消息自动生成，可改
   created_at      DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at      DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   last_message_at DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP, -- 右栏排序键
   PRIMARY KEY (id),
   UNIQUE KEY uk_chat_sessions_xid (xid),
-  KEY idx_sessions_user_active (user_id, last_message_at)
+  KEY idx_sessions_user_active (user_xid, last_message_at)
 );
 ```
 
-- `kb_id` 随会话固化检索范围（0 全局 / 否则单库），保证历史会话可复现
-- `context` + `context_msg_id`：会话级压缩上下文与游标，压缩时**替换** context 并推进游标，原始消息不删
+- `kb_xid` 随会话固化检索范围（空串全局 / 否则单库），保证历史会话可复现
+- `context` + `context_msg_id`：会话级压缩上下文与游标，压缩时**替换** context 并推进游标，原始消息不删；`context_msg_xid` 为同服务冗余
 
 #### chat_messages 消息（信封层）
 
@@ -329,7 +354,8 @@ CREATE TABLE chat_sessions (
 CREATE TABLE chat_messages (
   id         BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
   xid        VARCHAR(32)      NOT NULL,               -- 业务主键 <前缀>_<xid>（pkg/eid），对外标识（兼 UIMessage.id）
-  session_id BIGINT UNSIGNED NOT NULL,             -- 逻辑引用 chat_sessions.id
+  session_id BIGINT UNSIGNED NOT NULL,             -- 逻辑引用 chat_sessions.id（同服务）
+  session_xid VARCHAR(32)    NOT NULL DEFAULT '',  -- 会话 chs_<xid> 全串（同服务冗余）
   role       TINYINT         NOT NULL,             -- 1 user 2 assistant
   agent      VARCHAR(32)     NOT NULL DEFAULT '',  -- 产生该消息的智能体 id，user 消息为空
   content    LONGTEXT        NOT NULL,             -- 最终输出（assistant）或用户正文；prompt 拼装与检索用
@@ -347,7 +373,8 @@ CREATE TABLE chat_messages (
 ```sql
 CREATE TABLE chat_message_parts (
   id         BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
-  message_id BIGINT UNSIGNED NOT NULL,             -- 逻辑引用 chat_messages.id
+  message_id BIGINT UNSIGNED NOT NULL,             -- 逻辑引用 chat_messages.id（同服务）
+  message_xid VARCHAR(32)    NOT NULL DEFAULT '',  -- 消息 msg_<xid> 全串（同服务冗余）
   step       INT UNSIGNED    NOT NULL DEFAULT 0,   -- 步骤号（对应 UIMessage step-start 边界，0 起）
   seq        INT UNSIGNED    NOT NULL,             -- 消息内全局顺序（0 起）
   type       VARCHAR(32)     NOT NULL,             -- 对齐 UIMessage part 类型（见下表）
@@ -383,30 +410,39 @@ CREATE TABLE chat_message_parts (
 
 ```text
 relation(kb, me) =
-  OWN                若 kb.owner_id = me
+  OWN                若 kb.owner_xid = me
   MEMBER             若 kb_user_relations.role >= 1 (kb, me)
   STARRED            若 kb_user_relations.starred = 1 (kb, me)
-  FOLLOWED_AUTHOR    若 user_follows 存在 (me, kb.owner_id)
+  FOLLOWED_AUTHOR    若 user_follows 存在 (me, kb.owner_xid)
   OTHER              以上皆无
 ```
 
 - 可同时命中多个信号；**可见性**（能否看到）与**权重**（排多前）是两件事：可见性由 owner/member/visibility 三者决定，权重取最高命中信号（见 product.md 检索权重表）
-- 全局检索候选集 SQL 语义：`owner_id = me OR 存在成员行 OR visibility = 1`，**此过滤必须先于任何加权执行**
+- 全局检索候选集 SQL 语义：`owner_xid = me OR 存在成员行 OR visibility = 1`，**此过滤必须先于任何加权执行**
 
 ## 检索实现约定（AI 服务落地时遵循）
 
-1. 向量库按「知识库 × 向量化模型」隔离：vector-store 集合 `kb-<kb_id>-<model_id>`（文章分块入库），全局检索时对可见集合逐个查询后归并；检索只查**当前模型**后缀的集合——用什么模型，就检索对应的向量化结果
+1. 向量库按「知识库 × 向量化模型」隔离：vector-store 集合 `kb-<kb_xid>-<model_id>`（文章分块入库），全局检索时对可见集合逐个查询后归并；检索只查**当前模型**后缀的集合——用什么模型，就检索对应的向量化结果
 2. 文章保存/删除时，Repository 服务向 AI 服务同步增量（或 AI 订阅），由 AI 负责向量的写入与清理
 3. 检索先做权限硬过滤，再分别走向量与关键词召回并合并去重；重排序使用排名归一化、关系、时间、热度，并由 Decima-small 对前 K 个候选做 `noul` 相关性审查（P1 只做候选集过滤，P3 接入权重与审查）
 4. 向量输入统一为 `articles.content_key` 指向的 Garage 对象内 md（pdf/docx/html 即转换后的 md）：转换结果一次存储，重建索引 / 换 embedding 模型不重跑 markitdown；文档内嵌图片不提取，不参与分块
 5. 模型上下文不进用户消息流：压缩上下文存 `chat_sessions.context`，内部结构包含最新 `agent-system` 提示词和摘要；prompt 拼装 = 固定 System Prompt + context + `chat_messages` 中 `id >= context_msg_id` 的可见消息；预计请求 token 达模型上限的 65% 时触发压缩，压缩时**替换** context 并推进游标，最新 Agent 提示词置于摘要前，原始消息不删，`search_context` 排除 `agent-system`
 6. 切换向量化模型：新写入即切新模型集合 → 后台按 `articles.content_key` 读 md **全量重建**新模型集合（不重跑 markitdown）→ 重建完成前旧集合继续服务 → 完成后配置原子切换并下线旧集合（保留期可回滚）；旧向量按 metadata `embedding_model` 批量清理
 
+## ganrag_common 共享基础设施
+
+`async_tasks` 是唯一的共享表：任务/失败记录按 `source_service` + `task_type` 区分，`payload` 存类型相关参数，`dedupe_key` 提供幂等。
+
+- 业务服务在自身事务内调用 `pkg/asynctask.New(tx).Report(...)`，通过全限定表名 `ganrag_common.async_tasks` 写入，任务与业务行同事务。
+- 失败/成功/忽略通过 `Fail` / `Resolve` / `Ignore` 回写；后台与 worker 按 `status=0` 集中处理。
+- 首期类型 `garage_object_delete`（Repository 删除对象）；后续服务直接 import 包新增 `task_type`，不建新表、不新增服务。
+- 完整 DDL 见 [database.md](database.md)「ganrag_common」。
+
 ## 分期与迁移对照
 
 | 阶段 | 迁移 | 说明 |
 |------|------|------|
-| P1 | user: 0001-0003（含 0003_user_follows，社交接口 P2 开放）；repository: 0001-0005（五张表）；ai: 0001-0003（三张表） | 全部表一次建齐，社交接口 P2 再开 |
+| P1 | user: 0001-0005（引用 xid 对齐）；repository: 0001-0008（五张表 + 引用 xid 对齐）；ai: 0001-0005（三张表 + 引用 xid 对齐）；common: 0001（async_tasks） | 全部表一次建齐；共享任务表同期落地 |
 | P2 | 无新表 | star / follow / 搜索 / 个人页面接口与界面 |
 | P3 | 无新表 | 权重配置接入与调参 |
 

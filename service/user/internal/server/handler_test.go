@@ -340,7 +340,7 @@ func TestRefresh(t *testing.T) {
 	assertCode(t, err, codes.InvalidArgument, "空 token")
 
 	// 自然过期：写入已过期会话（绕过轮换），刷新拒绝
-	if err := h.st.UpsertSession(ctx, 1, eid.New(eid.Device), "",
+	if err := h.st.UpsertSession(ctx, 1, eid.New(eid.User), eid.New(eid.Device), "",
 		auth.HashRefreshToken("expired-rt"), time.Now().Add(-time.Minute)); err != nil {
 		t.Fatalf("写入过期会话失败: %v", err)
 	}

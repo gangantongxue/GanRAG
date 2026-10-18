@@ -233,7 +233,7 @@ pkg/db/migrations/ganrag_user/
 
 ### 表结构（目标定稿）
 
-> **建表迁移已交付**（2026-10-15 迁移基线重写，0001-0003，含 xid；旧 `refresh_tokens` 及其物理外键随重写消除，见 [docs/fix.md](../../../docs/fix.md) `FIX-001`）；代码适配见 [docs/todo.md](../../../docs/todo.md) 「users 相关代码适配」 / 「会话模型代码适配」 / 「对外接口 xid」。完整 DDL 与字段/索引表见 [docs/database.md](../../../docs/database.md)；设计决策见 [docs/data-model.md](../../../docs/data-model.md)「ganrag_user」。
+> **建表迁移已交付**（2026-10-15 基线 + 2026-10-18 引用 xid 对齐，0001-0005，含 xid；旧 `refresh_tokens` 及其物理外键随重写消除，见 [docs/fix.md](../../../docs/fix.md) `FIX-001`）；代码适配见 [docs/todo.md](../../../docs/todo.md) 「users 相关代码适配」 / 「会话模型代码适配」 / 「对外接口 xid」。完整 DDL 与字段/索引表见 [docs/database.md](../../../docs/database.md)；设计决策见 [docs/data-model.md](../../../docs/data-model.md)「ganrag_user」。
 
 ```sql
 -- users：用户账号（「users 相关代码适配」 改造：add email + uk_users_email、drop uk_users_username、drop nickname）
@@ -252,7 +252,8 @@ CREATE TABLE users (
 -- sessions：登录会话（「会话模型代码适配」 新建，替代 refresh_tokens；每设备一行）
 CREATE TABLE sessions (
   id             BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
-  user_id        BIGINT UNSIGNED NOT NULL,          -- 逻辑引用 users.id（无外键）
+  user_id        BIGINT UNSIGNED NOT NULL,          -- 逻辑引用 users.id（同服务）
+  user_xid       VARCHAR(32)      NOT NULL DEFAULT '', -- 用户 usr_<xid> 全串（同服务冗余）
   device_id      VARCHAR(64)  NOT NULL,             -- 设备码（服务端生成/核对，见 docs/data-model.md「设备标识（device_id）口径」）
   device_info    VARCHAR(255) NOT NULL DEFAULT '',  -- 设备信息（UA/平台摘要，设备列表展示）
   token_hash     CHAR(64)     NOT NULL,             -- 当前 refresh token 的 SHA-256，轮换原地更新
@@ -385,4 +386,4 @@ service/user/
 >
 > **待实施（本文档已按新设计更新）**：邮箱登录标识 + sessions 会话模型 + 找回密码 + 设备管理。
 > Redis 邮箱验证码 + 邮件发送通道已实现（2026-10-17：`pkg/redis` 连接包、`internal/auth/emailcode.go` / `mailer.go`、`SendEmailCode` RPC 与网关 `POST /api/v1/auth/email-code`；SMTP 未配置时验证码降级写日志，仅限本地开发）。
-> 建表迁移已交付（2026-10-15 重写，`pkg/db/migrations/ganrag_user/0001-0003`）；剩余代码适配与功能跟踪见 [docs/fix.md](../../../docs/fix.md) `FIX-001` 与 [docs/todo.md](../../../docs/todo.md) 「users 相关代码适配」至「对外接口 xid」。
+> 建表迁移已交付（2026-10-15 基线 + 2026-10-18 引用 xid 对齐，`pkg/db/migrations/ganrag_user/0001-0005`）；剩余代码适配与功能跟踪见 [docs/fix.md](../../../docs/fix.md) `FIX-001` 与 [docs/todo.md](../../../docs/todo.md) 「users 相关代码适配」至「对外接口 xid」。

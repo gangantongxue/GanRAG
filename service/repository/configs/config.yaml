@@ -1,0 +1,40 @@
+# Repository 服务配置
+#
+# 环境变量覆盖示例（前缀 GANRAG_，嵌套用下划线）：
+#   GANRAG_SERVER_PORT=50052
+#   GANRAG_DATABASE_PASSWORD=xxx
+#   GANRAG_OBJECTSTORE_ACCESS_KEY_ID=xxx   # 为空时回退 GARAGE_DEFAULT_ACCESS_KEY
+#   GANRAG_OBJECTSTORE_SECRET_ACCESS_KEY=xxx # 为空时回退 GARAGE_DEFAULT_SECRET_KEY
+
+server:
+  host: "0.0.0.0"   # gRPC 监听地址
+  port: 50052       # gRPC 监听端口
+
+database:
+  host: "127.0.0.1"
+  port: 3306
+  user: "ganrag"
+  password: ""             # 建议用 GANRAG_DATABASE_PASSWORD 环境变量覆盖
+  dbname: "ganrag_repository"
+  max_open_conns: 20
+  max_idle_conns: 5
+  conn_max_lifetime: "30m"
+  auto_migrate: true       # 启动时执行本服务迁移（失败拒绝启动）
+
+objectstore:
+  endpoint: "http://127.0.0.1:3900"  # 容器内：http://garage:3900
+  region: "garage"
+  bucket: "ganrag-objects"
+  access_key_id: ""        # 建议 GANRAG_OBJECTSTORE_ACCESS_KEY_ID 或复用 GARAGE_DEFAULT_ACCESS_KEY
+  secret_access_key: ""    # 建议 GANRAG_OBJECTSTORE_SECRET_ACCESS_KEY 或复用 GARAGE_DEFAULT_SECRET_KEY
+  force_path_style: true   # Garage 需 Path Style
+  timeout: "30s"           # 单次 S3 调用超时
+
+upload:
+  whole_max_size: 2097152  # 2MB；超过请前端走分片上传（阶段三）
+
+log:
+  output: "both"
+  level: "info"
+  format: "text"
+  directory: "./logs"

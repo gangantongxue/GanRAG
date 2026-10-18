@@ -23,6 +23,7 @@ import (
 // 参数：
 //   - ctx: 上下文
 //   - userID: 归属用户自增 ID
+//   - userXID: 归属用户业务主键 usr_<xid> 全串（同服务冗余，供对外展示/设备管理）
 //   - deviceID: 设备码（合法则沿用请求值，否则服务端生成 dev_<xid>；口径见 data-model.md）
 //   - deviceInfo: 设备信息（可空，设备列表展示）
 //   - tokenHash: refresh token 明文的 SHA-256 hex
@@ -30,7 +31,7 @@ import (
 //
 // 返回：
 //   - error: 写入失败返回数据库错误
-func (s *Store) UpsertSession(ctx context.Context, userID int64, deviceID, deviceInfo, tokenHash string, expiresAt time.Time) error {
+func (s *Store) UpsertSession(ctx context.Context, userID int64, userXID, deviceID, deviceInfo, tokenHash string, expiresAt time.Time) error {
 	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		q := dbquery.Use(tx)
 		if err := deleteExpiredSessions(ctx, q, userID); err != nil {
@@ -42,6 +43,7 @@ func (s *Store) UpsertSession(ctx context.Context, userID int64, deviceID, devic
 				// MySQL 落地为 ON DUPLICATE KEY UPDATE（唯一键 uk_sessions_user_device）
 				Columns: []clause.Column{{Name: "user_id"}, {Name: "device_id"}},
 				DoUpdates: clause.Assignments(map[string]any{
+					"user_xid":       userXID,
 					"device_info":    deviceInfo,
 					"token_hash":     tokenHash,
 					"expires_at":     expiresAt,
@@ -52,6 +54,7 @@ func (s *Store) UpsertSession(ctx context.Context, userID int64, deviceID, devic
 			Create(&dbmodel.Session{
 				Xid:          eid.New(eid.Session),
 				UserID:       userID,
+				UserXid:      userXID,
 				DeviceID:     deviceID,
 				DeviceInfo:   deviceInfo,
 				TokenHash:    tokenHash,

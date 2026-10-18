@@ -85,7 +85,7 @@ GanRAG 是一个 GitHub 风格的知识库产品：用户创建知识库、以�
 
 | 信号 | 来源 | 含义 |
 |------|------|------|
-| `OWN` | `knowledge_bases.owner_id = me` | 自己创建的库 |
+| `OWN` | `knowledge_bases.owner_xid = me` | 自己创建的库 |
 | `MEMBER` | `kb_members` 命中 | 自己是成员的库 |
 | `STARRED` | `kb_stars` 命中 | 自己 star 的库 |
 | `FOLLOWED_AUTHOR` | `user_follows` 命中库的 owner | 自己关注的作者创建的库 |

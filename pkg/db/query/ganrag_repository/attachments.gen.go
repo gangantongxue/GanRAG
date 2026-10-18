@@ -30,15 +30,18 @@ func newAttachment(db *gorm.DB, opts ...gen.DOOption) attachment {
 	_attachment.ID = field.NewInt64(tableName, "id")
 	_attachment.Xid = field.NewString(tableName, "xid")
 	_attachment.KbID = field.NewInt64(tableName, "kb_id")
+	_attachment.KbXid = field.NewString(tableName, "kb_xid")
 	_attachment.ArticleID = field.NewInt64(tableName, "article_id")
+	_attachment.ArticleXid = field.NewString(tableName, "article_xid")
 	_attachment.Kind = field.NewInt32(tableName, "kind")
 	_attachment.FileKey = field.NewString(tableName, "file_key")
+	_attachment.ObjectXid = field.NewString(tableName, "object_xid")
 	_attachment.RelativePath = field.NewString(tableName, "relative_path")
 	_attachment.OriginalName = field.NewString(tableName, "original_name")
 	_attachment.ContentType = field.NewString(tableName, "content_type")
 	_attachment.Size = field.NewInt64(tableName, "size")
 	_attachment.Sha256 = field.NewString(tableName, "sha256")
-	_attachment.CreatedBy = field.NewInt64(tableName, "created_by")
+	_attachment.CreatedByXid = field.NewString(tableName, "created_by_xid")
 	_attachment.CreatedAt = field.NewTime(tableName, "created_at")
 
 	_attachment.fillFieldMap()
@@ -53,15 +56,18 @@ type attachment struct {
 	ID           field.Int64
 	Xid          field.String // 业务主键，形如 att_<xid>（pkg/eid），对外标识（稳定 URL）
 	KbID         field.Int64
+	KbXid        field.String // 知识库 kb_<xid> 全串（同服务冗余）
 	ArticleID    field.Int64
+	ArticleXid   field.String // 文章 art_<xid> 全串（同服务冗余）
 	Kind         field.Int32
 	FileKey      field.String
+	ObjectXid    field.String // 对象 obj_<xid>（Garage key: o/<object_xid>）
 	RelativePath field.String
 	OriginalName field.String
 	ContentType  field.String
 	Size         field.Int64
 	Sha256       field.String
-	CreatedBy    field.Int64
+	CreatedByXid field.String // 上传者 usr_<xid> 全串（跨服务逻辑引用）
 	CreatedAt    field.Time
 
 	fieldMap map[string]field.Expr
@@ -82,15 +88,18 @@ func (a *attachment) updateTableName(table string) *attachment {
 	a.ID = field.NewInt64(table, "id")
 	a.Xid = field.NewString(table, "xid")
 	a.KbID = field.NewInt64(table, "kb_id")
+	a.KbXid = field.NewString(table, "kb_xid")
 	a.ArticleID = field.NewInt64(table, "article_id")
+	a.ArticleXid = field.NewString(table, "article_xid")
 	a.Kind = field.NewInt32(table, "kind")
 	a.FileKey = field.NewString(table, "file_key")
+	a.ObjectXid = field.NewString(table, "object_xid")
 	a.RelativePath = field.NewString(table, "relative_path")
 	a.OriginalName = field.NewString(table, "original_name")
 	a.ContentType = field.NewString(table, "content_type")
 	a.Size = field.NewInt64(table, "size")
 	a.Sha256 = field.NewString(table, "sha256")
-	a.CreatedBy = field.NewInt64(table, "created_by")
+	a.CreatedByXid = field.NewString(table, "created_by_xid")
 	a.CreatedAt = field.NewTime(table, "created_at")
 
 	a.fillFieldMap()
@@ -118,19 +127,22 @@ func (a *attachment) GetFieldByName(fieldName string) (field.OrderExpr, bool) {
 }
 
 func (a *attachment) fillFieldMap() {
-	a.fieldMap = make(map[string]field.Expr, 13)
+	a.fieldMap = make(map[string]field.Expr, 16)
 	a.fieldMap["id"] = a.ID
 	a.fieldMap["xid"] = a.Xid
 	a.fieldMap["kb_id"] = a.KbID
+	a.fieldMap["kb_xid"] = a.KbXid
 	a.fieldMap["article_id"] = a.ArticleID
+	a.fieldMap["article_xid"] = a.ArticleXid
 	a.fieldMap["kind"] = a.Kind
 	a.fieldMap["file_key"] = a.FileKey
+	a.fieldMap["object_xid"] = a.ObjectXid
 	a.fieldMap["relative_path"] = a.RelativePath
 	a.fieldMap["original_name"] = a.OriginalName
 	a.fieldMap["content_type"] = a.ContentType
 	a.fieldMap["size"] = a.Size
 	a.fieldMap["sha256"] = a.Sha256
-	a.fieldMap["created_by"] = a.CreatedBy
+	a.fieldMap["created_by_xid"] = a.CreatedByXid
 	a.fieldMap["created_at"] = a.CreatedAt
 }
 

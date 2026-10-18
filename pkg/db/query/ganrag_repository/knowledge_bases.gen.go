@@ -19,37 +19,37 @@ import (
 	"github.com/gangantongxue/GanRAG/pkg/db/model/ganrag_repository"
 )
 
-func newKnowledgeBasis(db *gorm.DB, opts ...gen.DOOption) knowledgeBasis {
-	_knowledgeBasis := knowledgeBasis{}
+func newKnowledgeBase(db *gorm.DB, opts ...gen.DOOption) knowledgeBase {
+	_knowledgeBase := knowledgeBase{}
 
-	_knowledgeBasis.knowledgeBasisDo.UseDB(db, opts...)
-	_knowledgeBasis.knowledgeBasisDo.UseModel(&ganrag_repository.KnowledgeBasis{})
+	_knowledgeBase.knowledgeBaseDo.UseDB(db, opts...)
+	_knowledgeBase.knowledgeBaseDo.UseModel(&ganrag_repository.KnowledgeBase{})
 
-	tableName := _knowledgeBasis.knowledgeBasisDo.TableName()
-	_knowledgeBasis.ALL = field.NewAsterisk(tableName)
-	_knowledgeBasis.ID = field.NewInt64(tableName, "id")
-	_knowledgeBasis.Xid = field.NewString(tableName, "xid")
-	_knowledgeBasis.OwnerID = field.NewInt64(tableName, "owner_id")
-	_knowledgeBasis.Name = field.NewString(tableName, "name")
-	_knowledgeBasis.Description = field.NewString(tableName, "description")
-	_knowledgeBasis.Visibility = field.NewInt32(tableName, "visibility")
-	_knowledgeBasis.ArticleCount = field.NewInt32(tableName, "article_count")
-	_knowledgeBasis.StarCount = field.NewInt32(tableName, "star_count")
-	_knowledgeBasis.CreatedAt = field.NewTime(tableName, "created_at")
-	_knowledgeBasis.UpdatedAt = field.NewTime(tableName, "updated_at")
+	tableName := _knowledgeBase.knowledgeBaseDo.TableName()
+	_knowledgeBase.ALL = field.NewAsterisk(tableName)
+	_knowledgeBase.ID = field.NewInt64(tableName, "id")
+	_knowledgeBase.Xid = field.NewString(tableName, "xid")
+	_knowledgeBase.OwnerXid = field.NewString(tableName, "owner_xid")
+	_knowledgeBase.Name = field.NewString(tableName, "name")
+	_knowledgeBase.Description = field.NewString(tableName, "description")
+	_knowledgeBase.Visibility = field.NewInt32(tableName, "visibility")
+	_knowledgeBase.ArticleCount = field.NewInt32(tableName, "article_count")
+	_knowledgeBase.StarCount = field.NewInt32(tableName, "star_count")
+	_knowledgeBase.CreatedAt = field.NewTime(tableName, "created_at")
+	_knowledgeBase.UpdatedAt = field.NewTime(tableName, "updated_at")
 
-	_knowledgeBasis.fillFieldMap()
+	_knowledgeBase.fillFieldMap()
 
-	return _knowledgeBasis
+	return _knowledgeBase
 }
 
-type knowledgeBasis struct {
-	knowledgeBasisDo knowledgeBasisDo
+type knowledgeBase struct {
+	knowledgeBaseDo knowledgeBaseDo
 
 	ALL          field.Asterisk
 	ID           field.Int64
 	Xid          field.String // 业务主键，形如 kb_<xid>（pkg/eid），对外标识
-	OwnerID      field.Int64
+	OwnerXid     field.String // 库主 usr_<xid> 全串（跨服务逻辑引用）
 	Name         field.String
 	Description  field.String
 	Visibility   field.Int32
@@ -61,21 +61,21 @@ type knowledgeBasis struct {
 	fieldMap map[string]field.Expr
 }
 
-func (k knowledgeBasis) Table(newTableName string) *knowledgeBasis {
-	k.knowledgeBasisDo.UseTable(newTableName)
+func (k knowledgeBase) Table(newTableName string) *knowledgeBase {
+	k.knowledgeBaseDo.UseTable(newTableName)
 	return k.updateTableName(newTableName)
 }
 
-func (k knowledgeBasis) As(alias string) *knowledgeBasis {
-	k.knowledgeBasisDo.DO = *(k.knowledgeBasisDo.As(alias).(*gen.DO))
+func (k knowledgeBase) As(alias string) *knowledgeBase {
+	k.knowledgeBaseDo.DO = *(k.knowledgeBaseDo.As(alias).(*gen.DO))
 	return k.updateTableName(alias)
 }
 
-func (k *knowledgeBasis) updateTableName(table string) *knowledgeBasis {
+func (k *knowledgeBase) updateTableName(table string) *knowledgeBase {
 	k.ALL = field.NewAsterisk(table)
 	k.ID = field.NewInt64(table, "id")
 	k.Xid = field.NewString(table, "xid")
-	k.OwnerID = field.NewInt64(table, "owner_id")
+	k.OwnerXid = field.NewString(table, "owner_xid")
 	k.Name = field.NewString(table, "name")
 	k.Description = field.NewString(table, "description")
 	k.Visibility = field.NewInt32(table, "visibility")
@@ -89,19 +89,19 @@ func (k *knowledgeBasis) updateTableName(table string) *knowledgeBasis {
 	return k
 }
 
-func (k *knowledgeBasis) WithContext(ctx context.Context) *knowledgeBasisDo {
-	return k.knowledgeBasisDo.WithContext(ctx)
+func (k *knowledgeBase) WithContext(ctx context.Context) *knowledgeBaseDo {
+	return k.knowledgeBaseDo.WithContext(ctx)
 }
 
-func (k knowledgeBasis) TableName() string { return k.knowledgeBasisDo.TableName() }
+func (k knowledgeBase) TableName() string { return k.knowledgeBaseDo.TableName() }
 
-func (k knowledgeBasis) Alias() string { return k.knowledgeBasisDo.Alias() }
+func (k knowledgeBase) Alias() string { return k.knowledgeBaseDo.Alias() }
 
-func (k knowledgeBasis) Columns(cols ...field.Expr) gen.Columns {
-	return k.knowledgeBasisDo.Columns(cols...)
+func (k knowledgeBase) Columns(cols ...field.Expr) gen.Columns {
+	return k.knowledgeBaseDo.Columns(cols...)
 }
 
-func (k *knowledgeBasis) GetFieldByName(fieldName string) (field.OrderExpr, bool) {
+func (k *knowledgeBase) GetFieldByName(fieldName string) (field.OrderExpr, bool) {
 	_f, ok := k.fieldMap[fieldName]
 	if !ok || _f == nil {
 		return nil, false
@@ -110,11 +110,11 @@ func (k *knowledgeBasis) GetFieldByName(fieldName string) (field.OrderExpr, bool
 	return _oe, ok
 }
 
-func (k *knowledgeBasis) fillFieldMap() {
+func (k *knowledgeBase) fillFieldMap() {
 	k.fieldMap = make(map[string]field.Expr, 10)
 	k.fieldMap["id"] = k.ID
 	k.fieldMap["xid"] = k.Xid
-	k.fieldMap["owner_id"] = k.OwnerID
+	k.fieldMap["owner_xid"] = k.OwnerXid
 	k.fieldMap["name"] = k.Name
 	k.fieldMap["description"] = k.Description
 	k.fieldMap["visibility"] = k.Visibility
@@ -124,161 +124,161 @@ func (k *knowledgeBasis) fillFieldMap() {
 	k.fieldMap["updated_at"] = k.UpdatedAt
 }
 
-func (k knowledgeBasis) clone(db *gorm.DB) knowledgeBasis {
-	k.knowledgeBasisDo.ReplaceConnPool(db.Statement.ConnPool)
+func (k knowledgeBase) clone(db *gorm.DB) knowledgeBase {
+	k.knowledgeBaseDo.ReplaceConnPool(db.Statement.ConnPool)
 	return k
 }
 
-func (k knowledgeBasis) replaceDB(db *gorm.DB) knowledgeBasis {
-	k.knowledgeBasisDo.ReplaceDB(db)
+func (k knowledgeBase) replaceDB(db *gorm.DB) knowledgeBase {
+	k.knowledgeBaseDo.ReplaceDB(db)
 	return k
 }
 
-type knowledgeBasisDo struct{ gen.DO }
+type knowledgeBaseDo struct{ gen.DO }
 
-func (k knowledgeBasisDo) Debug() *knowledgeBasisDo {
+func (k knowledgeBaseDo) Debug() *knowledgeBaseDo {
 	return k.withDO(k.DO.Debug())
 }
 
-func (k knowledgeBasisDo) WithContext(ctx context.Context) *knowledgeBasisDo {
+func (k knowledgeBaseDo) WithContext(ctx context.Context) *knowledgeBaseDo {
 	return k.withDO(k.DO.WithContext(ctx))
 }
 
-func (k knowledgeBasisDo) ReadDB() *knowledgeBasisDo {
+func (k knowledgeBaseDo) ReadDB() *knowledgeBaseDo {
 	return k.Clauses(dbresolver.Read)
 }
 
-func (k knowledgeBasisDo) WriteDB() *knowledgeBasisDo {
+func (k knowledgeBaseDo) WriteDB() *knowledgeBaseDo {
 	return k.Clauses(dbresolver.Write)
 }
 
-func (k knowledgeBasisDo) Session(config *gorm.Session) *knowledgeBasisDo {
+func (k knowledgeBaseDo) Session(config *gorm.Session) *knowledgeBaseDo {
 	return k.withDO(k.DO.Session(config))
 }
 
-func (k knowledgeBasisDo) Clauses(conds ...clause.Expression) *knowledgeBasisDo {
+func (k knowledgeBaseDo) Clauses(conds ...clause.Expression) *knowledgeBaseDo {
 	return k.withDO(k.DO.Clauses(conds...))
 }
 
-func (k knowledgeBasisDo) Returning(value interface{}, columns ...string) *knowledgeBasisDo {
+func (k knowledgeBaseDo) Returning(value interface{}, columns ...string) *knowledgeBaseDo {
 	return k.withDO(k.DO.Returning(value, columns...))
 }
 
-func (k knowledgeBasisDo) Not(conds ...gen.Condition) *knowledgeBasisDo {
+func (k knowledgeBaseDo) Not(conds ...gen.Condition) *knowledgeBaseDo {
 	return k.withDO(k.DO.Not(conds...))
 }
 
-func (k knowledgeBasisDo) Or(conds ...gen.Condition) *knowledgeBasisDo {
+func (k knowledgeBaseDo) Or(conds ...gen.Condition) *knowledgeBaseDo {
 	return k.withDO(k.DO.Or(conds...))
 }
 
-func (k knowledgeBasisDo) Select(conds ...field.Expr) *knowledgeBasisDo {
+func (k knowledgeBaseDo) Select(conds ...field.Expr) *knowledgeBaseDo {
 	return k.withDO(k.DO.Select(conds...))
 }
 
-func (k knowledgeBasisDo) Where(conds ...gen.Condition) *knowledgeBasisDo {
+func (k knowledgeBaseDo) Where(conds ...gen.Condition) *knowledgeBaseDo {
 	return k.withDO(k.DO.Where(conds...))
 }
 
-func (k knowledgeBasisDo) Order(conds ...field.Expr) *knowledgeBasisDo {
+func (k knowledgeBaseDo) Order(conds ...field.Expr) *knowledgeBaseDo {
 	return k.withDO(k.DO.Order(conds...))
 }
 
-func (k knowledgeBasisDo) Distinct(cols ...field.Expr) *knowledgeBasisDo {
+func (k knowledgeBaseDo) Distinct(cols ...field.Expr) *knowledgeBaseDo {
 	return k.withDO(k.DO.Distinct(cols...))
 }
 
-func (k knowledgeBasisDo) Omit(cols ...field.Expr) *knowledgeBasisDo {
+func (k knowledgeBaseDo) Omit(cols ...field.Expr) *knowledgeBaseDo {
 	return k.withDO(k.DO.Omit(cols...))
 }
 
-func (k knowledgeBasisDo) Join(table schema.Tabler, on ...field.Expr) *knowledgeBasisDo {
+func (k knowledgeBaseDo) Join(table schema.Tabler, on ...field.Expr) *knowledgeBaseDo {
 	return k.withDO(k.DO.Join(table, on...))
 }
 
-func (k knowledgeBasisDo) LeftJoin(table schema.Tabler, on ...field.Expr) *knowledgeBasisDo {
+func (k knowledgeBaseDo) LeftJoin(table schema.Tabler, on ...field.Expr) *knowledgeBaseDo {
 	return k.withDO(k.DO.LeftJoin(table, on...))
 }
 
-func (k knowledgeBasisDo) RightJoin(table schema.Tabler, on ...field.Expr) *knowledgeBasisDo {
+func (k knowledgeBaseDo) RightJoin(table schema.Tabler, on ...field.Expr) *knowledgeBaseDo {
 	return k.withDO(k.DO.RightJoin(table, on...))
 }
 
-func (k knowledgeBasisDo) Group(cols ...field.Expr) *knowledgeBasisDo {
+func (k knowledgeBaseDo) Group(cols ...field.Expr) *knowledgeBaseDo {
 	return k.withDO(k.DO.Group(cols...))
 }
 
-func (k knowledgeBasisDo) Having(conds ...gen.Condition) *knowledgeBasisDo {
+func (k knowledgeBaseDo) Having(conds ...gen.Condition) *knowledgeBaseDo {
 	return k.withDO(k.DO.Having(conds...))
 }
 
-func (k knowledgeBasisDo) Limit(limit int) *knowledgeBasisDo {
+func (k knowledgeBaseDo) Limit(limit int) *knowledgeBaseDo {
 	return k.withDO(k.DO.Limit(limit))
 }
 
-func (k knowledgeBasisDo) Offset(offset int) *knowledgeBasisDo {
+func (k knowledgeBaseDo) Offset(offset int) *knowledgeBaseDo {
 	return k.withDO(k.DO.Offset(offset))
 }
 
-func (k knowledgeBasisDo) Scopes(funcs ...func(gen.Dao) gen.Dao) *knowledgeBasisDo {
+func (k knowledgeBaseDo) Scopes(funcs ...func(gen.Dao) gen.Dao) *knowledgeBaseDo {
 	return k.withDO(k.DO.Scopes(funcs...))
 }
 
-func (k knowledgeBasisDo) Unscoped() *knowledgeBasisDo {
+func (k knowledgeBaseDo) Unscoped() *knowledgeBaseDo {
 	return k.withDO(k.DO.Unscoped())
 }
 
-func (k knowledgeBasisDo) Create(values ...*ganrag_repository.KnowledgeBasis) error {
+func (k knowledgeBaseDo) Create(values ...*ganrag_repository.KnowledgeBase) error {
 	if len(values) == 0 {
 		return nil
 	}
 	return k.DO.Create(values)
 }
 
-func (k knowledgeBasisDo) CreateInBatches(values []*ganrag_repository.KnowledgeBasis, batchSize int) error {
+func (k knowledgeBaseDo) CreateInBatches(values []*ganrag_repository.KnowledgeBase, batchSize int) error {
 	return k.DO.CreateInBatches(values, batchSize)
 }
 
 // Save : !!! underlying implementation is different with GORM
 // The method is equivalent to executing the statement: db.Clauses(clause.OnConflict{UpdateAll: true}).Create(values)
-func (k knowledgeBasisDo) Save(values ...*ganrag_repository.KnowledgeBasis) error {
+func (k knowledgeBaseDo) Save(values ...*ganrag_repository.KnowledgeBase) error {
 	if len(values) == 0 {
 		return nil
 	}
 	return k.DO.Save(values)
 }
 
-func (k knowledgeBasisDo) First() (*ganrag_repository.KnowledgeBasis, error) {
+func (k knowledgeBaseDo) First() (*ganrag_repository.KnowledgeBase, error) {
 	if result, err := k.DO.First(); err != nil {
 		return nil, err
 	} else {
-		return result.(*ganrag_repository.KnowledgeBasis), nil
+		return result.(*ganrag_repository.KnowledgeBase), nil
 	}
 }
 
-func (k knowledgeBasisDo) Take() (*ganrag_repository.KnowledgeBasis, error) {
+func (k knowledgeBaseDo) Take() (*ganrag_repository.KnowledgeBase, error) {
 	if result, err := k.DO.Take(); err != nil {
 		return nil, err
 	} else {
-		return result.(*ganrag_repository.KnowledgeBasis), nil
+		return result.(*ganrag_repository.KnowledgeBase), nil
 	}
 }
 
-func (k knowledgeBasisDo) Last() (*ganrag_repository.KnowledgeBasis, error) {
+func (k knowledgeBaseDo) Last() (*ganrag_repository.KnowledgeBase, error) {
 	if result, err := k.DO.Last(); err != nil {
 		return nil, err
 	} else {
-		return result.(*ganrag_repository.KnowledgeBasis), nil
+		return result.(*ganrag_repository.KnowledgeBase), nil
 	}
 }
 
-func (k knowledgeBasisDo) Find() ([]*ganrag_repository.KnowledgeBasis, error) {
+func (k knowledgeBaseDo) Find() ([]*ganrag_repository.KnowledgeBase, error) {
 	result, err := k.DO.Find()
-	return result.([]*ganrag_repository.KnowledgeBasis), err
+	return result.([]*ganrag_repository.KnowledgeBase), err
 }
 
-func (k knowledgeBasisDo) FindInBatch(batchSize int, fc func(tx gen.Dao, batch int) error) (results []*ganrag_repository.KnowledgeBasis, err error) {
-	buf := make([]*ganrag_repository.KnowledgeBasis, 0, batchSize)
+func (k knowledgeBaseDo) FindInBatch(batchSize int, fc func(tx gen.Dao, batch int) error) (results []*ganrag_repository.KnowledgeBase, err error) {
+	buf := make([]*ganrag_repository.KnowledgeBase, 0, batchSize)
 	err = k.DO.FindInBatches(&buf, batchSize, func(tx gen.Dao, batch int) error {
 		defer func() { results = append(results, buf...) }()
 		return fc(tx, batch)
@@ -286,49 +286,49 @@ func (k knowledgeBasisDo) FindInBatch(batchSize int, fc func(tx gen.Dao, batch i
 	return results, err
 }
 
-func (k knowledgeBasisDo) FindInBatches(result *[]*ganrag_repository.KnowledgeBasis, batchSize int, fc func(tx gen.Dao, batch int) error) error {
+func (k knowledgeBaseDo) FindInBatches(result *[]*ganrag_repository.KnowledgeBase, batchSize int, fc func(tx gen.Dao, batch int) error) error {
 	return k.DO.FindInBatches(result, batchSize, fc)
 }
 
-func (k knowledgeBasisDo) Attrs(attrs ...field.AssignExpr) *knowledgeBasisDo {
+func (k knowledgeBaseDo) Attrs(attrs ...field.AssignExpr) *knowledgeBaseDo {
 	return k.withDO(k.DO.Attrs(attrs...))
 }
 
-func (k knowledgeBasisDo) Assign(attrs ...field.AssignExpr) *knowledgeBasisDo {
+func (k knowledgeBaseDo) Assign(attrs ...field.AssignExpr) *knowledgeBaseDo {
 	return k.withDO(k.DO.Assign(attrs...))
 }
 
-func (k knowledgeBasisDo) Joins(fields ...field.RelationField) *knowledgeBasisDo {
+func (k knowledgeBaseDo) Joins(fields ...field.RelationField) *knowledgeBaseDo {
 	for _, _f := range fields {
 		k = *k.withDO(k.DO.Joins(_f))
 	}
 	return &k
 }
 
-func (k knowledgeBasisDo) Preload(fields ...field.RelationField) *knowledgeBasisDo {
+func (k knowledgeBaseDo) Preload(fields ...field.RelationField) *knowledgeBaseDo {
 	for _, _f := range fields {
 		k = *k.withDO(k.DO.Preload(_f))
 	}
 	return &k
 }
 
-func (k knowledgeBasisDo) FirstOrInit() (*ganrag_repository.KnowledgeBasis, error) {
+func (k knowledgeBaseDo) FirstOrInit() (*ganrag_repository.KnowledgeBase, error) {
 	if result, err := k.DO.FirstOrInit(); err != nil {
 		return nil, err
 	} else {
-		return result.(*ganrag_repository.KnowledgeBasis), nil
+		return result.(*ganrag_repository.KnowledgeBase), nil
 	}
 }
 
-func (k knowledgeBasisDo) FirstOrCreate() (*ganrag_repository.KnowledgeBasis, error) {
+func (k knowledgeBaseDo) FirstOrCreate() (*ganrag_repository.KnowledgeBase, error) {
 	if result, err := k.DO.FirstOrCreate(); err != nil {
 		return nil, err
 	} else {
-		return result.(*ganrag_repository.KnowledgeBasis), nil
+		return result.(*ganrag_repository.KnowledgeBase), nil
 	}
 }
 
-func (k knowledgeBasisDo) FindByPage(offset int, limit int) (result []*ganrag_repository.KnowledgeBasis, count int64, err error) {
+func (k knowledgeBaseDo) FindByPage(offset int, limit int) (result []*ganrag_repository.KnowledgeBase, count int64, err error) {
 	result, err = k.Offset(offset).Limit(limit).Find()
 	if err != nil {
 		return
@@ -343,7 +343,7 @@ func (k knowledgeBasisDo) FindByPage(offset int, limit int) (result []*ganrag_re
 	return
 }
 
-func (k knowledgeBasisDo) ScanByPage(result interface{}, offset int, limit int) (count int64, err error) {
+func (k knowledgeBaseDo) ScanByPage(result interface{}, offset int, limit int) (count int64, err error) {
 	count, err = k.Count()
 	if err != nil {
 		return
@@ -353,15 +353,15 @@ func (k knowledgeBasisDo) ScanByPage(result interface{}, offset int, limit int) 
 	return
 }
 
-func (k knowledgeBasisDo) Scan(result interface{}) (err error) {
+func (k knowledgeBaseDo) Scan(result interface{}) (err error) {
 	return k.DO.Scan(result)
 }
 
-func (k knowledgeBasisDo) Delete(models ...*ganrag_repository.KnowledgeBasis) (result gen.ResultInfo, err error) {
+func (k knowledgeBaseDo) Delete(models ...*ganrag_repository.KnowledgeBase) (result gen.ResultInfo, err error) {
 	return k.DO.Delete(models)
 }
 
-func (k *knowledgeBasisDo) withDO(do gen.Dao) *knowledgeBasisDo {
+func (k *knowledgeBaseDo) withDO(do gen.Dao) *knowledgeBaseDo {
 	k.DO = *do.(*gen.DO)
 	return k
 }

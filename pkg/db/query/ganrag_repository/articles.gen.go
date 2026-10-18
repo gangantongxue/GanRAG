@@ -30,11 +30,14 @@ func newArticle(db *gorm.DB, opts ...gen.DOOption) article {
 	_article.ID = field.NewInt64(tableName, "id")
 	_article.Xid = field.NewString(tableName, "xid")
 	_article.KbID = field.NewInt64(tableName, "kb_id")
+	_article.KbXid = field.NewString(tableName, "kb_xid")
 	_article.DirID = field.NewInt64(tableName, "dir_id")
+	_article.DirXid = field.NewString(tableName, "dir_xid")
 	_article.Type = field.NewInt32(tableName, "type")
 	_article.Title = field.NewString(tableName, "title")
 	_article.ContentKey = field.NewString(tableName, "content_key")
-	_article.CreatedBy = field.NewInt64(tableName, "created_by")
+	_article.ContentObjectXid = field.NewString(tableName, "content_object_xid")
+	_article.CreatedByXid = field.NewString(tableName, "created_by_xid")
 	_article.CreatedAt = field.NewTime(tableName, "created_at")
 	_article.UpdatedAt = field.NewTime(tableName, "updated_at")
 
@@ -46,17 +49,20 @@ func newArticle(db *gorm.DB, opts ...gen.DOOption) article {
 type article struct {
 	articleDo articleDo
 
-	ALL        field.Asterisk
-	ID         field.Int64
-	Xid        field.String // 业务主键，形如 art_<xid>（pkg/eid），对外标识
-	KbID       field.Int64
-	DirID      field.Int64
-	Type       field.Int32
-	Title      field.String
-	ContentKey field.String
-	CreatedBy  field.Int64
-	CreatedAt  field.Time
-	UpdatedAt  field.Time
+	ALL              field.Asterisk
+	ID               field.Int64
+	Xid              field.String // 业务主键，形如 art_<xid>（pkg/eid），对外标识
+	KbID             field.Int64
+	KbXid            field.String // 知识库 kb_<xid> 全串（同服务冗余）
+	DirID            field.Int64
+	DirXid           field.String // 目录 dir_<xid> 全串；空串=根（同服务冗余）
+	Type             field.Int32
+	Title            field.String
+	ContentKey       field.String
+	ContentObjectXid field.String // 正文对象 obj_<xid>（Garage key: o/<object_xid>）
+	CreatedByXid     field.String // 创建者 usr_<xid> 全串（跨服务逻辑引用）
+	CreatedAt        field.Time
+	UpdatedAt        field.Time
 
 	fieldMap map[string]field.Expr
 }
@@ -76,11 +82,14 @@ func (a *article) updateTableName(table string) *article {
 	a.ID = field.NewInt64(table, "id")
 	a.Xid = field.NewString(table, "xid")
 	a.KbID = field.NewInt64(table, "kb_id")
+	a.KbXid = field.NewString(table, "kb_xid")
 	a.DirID = field.NewInt64(table, "dir_id")
+	a.DirXid = field.NewString(table, "dir_xid")
 	a.Type = field.NewInt32(table, "type")
 	a.Title = field.NewString(table, "title")
 	a.ContentKey = field.NewString(table, "content_key")
-	a.CreatedBy = field.NewInt64(table, "created_by")
+	a.ContentObjectXid = field.NewString(table, "content_object_xid")
+	a.CreatedByXid = field.NewString(table, "created_by_xid")
 	a.CreatedAt = field.NewTime(table, "created_at")
 	a.UpdatedAt = field.NewTime(table, "updated_at")
 
@@ -107,15 +116,18 @@ func (a *article) GetFieldByName(fieldName string) (field.OrderExpr, bool) {
 }
 
 func (a *article) fillFieldMap() {
-	a.fieldMap = make(map[string]field.Expr, 10)
+	a.fieldMap = make(map[string]field.Expr, 13)
 	a.fieldMap["id"] = a.ID
 	a.fieldMap["xid"] = a.Xid
 	a.fieldMap["kb_id"] = a.KbID
+	a.fieldMap["kb_xid"] = a.KbXid
 	a.fieldMap["dir_id"] = a.DirID
+	a.fieldMap["dir_xid"] = a.DirXid
 	a.fieldMap["type"] = a.Type
 	a.fieldMap["title"] = a.Title
 	a.fieldMap["content_key"] = a.ContentKey
-	a.fieldMap["created_by"] = a.CreatedBy
+	a.fieldMap["content_object_xid"] = a.ContentObjectXid
+	a.fieldMap["created_by_xid"] = a.CreatedByXid
 	a.fieldMap["created_at"] = a.CreatedAt
 	a.fieldMap["updated_at"] = a.UpdatedAt
 }

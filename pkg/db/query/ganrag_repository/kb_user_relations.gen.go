@@ -28,7 +28,8 @@ func newKbUserRelation(db *gorm.DB, opts ...gen.DOOption) kbUserRelation {
 	tableName := _kbUserRelation.kbUserRelationDo.TableName()
 	_kbUserRelation.ALL = field.NewAsterisk(tableName)
 	_kbUserRelation.KbID = field.NewInt64(tableName, "kb_id")
-	_kbUserRelation.UserID = field.NewInt64(tableName, "user_id")
+	_kbUserRelation.KbXid = field.NewString(tableName, "kb_xid")
+	_kbUserRelation.UserXid = field.NewString(tableName, "user_xid")
 	_kbUserRelation.Role = field.NewInt32(tableName, "role")
 	_kbUserRelation.Starred = field.NewInt32(tableName, "starred")
 	_kbUserRelation.StarredAt = field.NewTime(tableName, "starred_at")
@@ -44,7 +45,8 @@ type kbUserRelation struct {
 
 	ALL       field.Asterisk
 	KbID      field.Int64
-	UserID    field.Int64
+	KbXid     field.String // 知识库 kb_<xid> 全串（同服务冗余）
+	UserXid   field.String // 用户 usr_<xid> 全串（跨服务逻辑引用）
 	Role      field.Int32
 	Starred   field.Int32
 	StarredAt field.Time
@@ -66,7 +68,8 @@ func (k kbUserRelation) As(alias string) *kbUserRelation {
 func (k *kbUserRelation) updateTableName(table string) *kbUserRelation {
 	k.ALL = field.NewAsterisk(table)
 	k.KbID = field.NewInt64(table, "kb_id")
-	k.UserID = field.NewInt64(table, "user_id")
+	k.KbXid = field.NewString(table, "kb_xid")
+	k.UserXid = field.NewString(table, "user_xid")
 	k.Role = field.NewInt32(table, "role")
 	k.Starred = field.NewInt32(table, "starred")
 	k.StarredAt = field.NewTime(table, "starred_at")
@@ -99,9 +102,10 @@ func (k *kbUserRelation) GetFieldByName(fieldName string) (field.OrderExpr, bool
 }
 
 func (k *kbUserRelation) fillFieldMap() {
-	k.fieldMap = make(map[string]field.Expr, 6)
+	k.fieldMap = make(map[string]field.Expr, 7)
 	k.fieldMap["kb_id"] = k.KbID
-	k.fieldMap["user_id"] = k.UserID
+	k.fieldMap["kb_xid"] = k.KbXid
+	k.fieldMap["user_xid"] = k.UserXid
 	k.fieldMap["role"] = k.Role
 	k.fieldMap["starred"] = k.Starred
 	k.fieldMap["starred_at"] = k.StarredAt

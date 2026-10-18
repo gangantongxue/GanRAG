@@ -33,6 +33,7 @@ const (
 	ChatMessage   Type = "msg" // 聊天消息
 	Object        Type = "obj" // 对象存储对象（Garage key：o/<obj_xid>）
 	Upload        Type = "upl" // 上传会话（分片上传 upload_id，见 api/proto/repository/v1）
+	Task          Type = "tsk" // 公共异步任务/失败记录（ganrag_common.async_tasks）
 )
 
 // maxLen 业务主键全串长度上限（库列 VARCHAR(32)）；最长 4 + 20 = 24，留扩展余量
@@ -42,7 +43,7 @@ const maxLen = 32
 var registeredTypes = map[Type]struct{}{
 	User: {}, Session: {}, Device: {}, KnowledgeBase: {},
 	Directory: {}, Article: {}, Attachment: {},
-	ChatSession: {}, ChatMessage: {}, Object: {}, Upload: {},
+	ChatSession: {}, ChatMessage: {}, Object: {}, Upload: {}, Task: {},
 }
 
 // New 生成指定实体类型的业务主键，形如 usr_<20位XID>

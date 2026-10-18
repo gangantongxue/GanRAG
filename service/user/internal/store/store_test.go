@@ -43,14 +43,14 @@ func newTestStore(t *testing.T) (*Store, *gorm.DB) {
 	return New(db), db
 }
 
-// mustCreateUser 创建测试用户并返回其 ID（email 用 name 拼装，展示名同名）
-func mustCreateUser(t *testing.T, s *Store, name string) int64 {
+// mustCreateUser 创建测试用户并返回用户行（email 用 name 拼装，展示名同名）
+func mustCreateUser(t *testing.T, s *Store, name string) *dbmodel.User {
 	t.Helper()
 	u, err := s.CreateUser(context.Background(), name+"@example.com", name, "hash-"+name)
 	if err != nil {
 		t.Fatalf("CreateUser(%s) 错误: %v", name, err)
 	}
-	return u.ID
+	return u
 }
 
 // TestCreateUser 验证创建用户、xid 生成与邮箱唯一性
@@ -85,7 +85,8 @@ func TestCreateUser(t *testing.T) {
 func TestGetUser(t *testing.T) {
 	s, _ := newTestStore(t)
 	ctx := context.Background()
-	id := mustCreateUser(t, s, "bob")
+	u := mustCreateUser(t, s, "bob")
+	id := u.ID
 
 	byID, err := s.GetUserByID(ctx, id)
 	if err != nil {
@@ -126,13 +127,14 @@ func TestGetUser(t *testing.T) {
 func TestUpdatePassword(t *testing.T) {
 	s, _ := newTestStore(t)
 	ctx := context.Background()
-	id := mustCreateUser(t, s, "carol")
+	u := mustCreateUser(t, s, "carol")
+	id := u.ID
 
 	// 两个设备的活跃会话
-	if err := s.UpsertSession(ctx, id, "dev-1", "", "hash-rt-1", time.Now().Add(time.Hour)); err != nil {
+	if err := s.UpsertSession(ctx, id, u.Xid, "dev-1", "", "hash-rt-1", time.Now().Add(time.Hour)); err != nil {
 		t.Fatalf("UpsertSession() 错误: %v", err)
 	}
-	if err := s.UpsertSession(ctx, id, "dev-2", "", "hash-rt-2", time.Now().Add(time.Hour)); err != nil {
+	if err := s.UpsertSession(ctx, id, u.Xid, "dev-2", "", "hash-rt-2", time.Now().Add(time.Hour)); err != nil {
 		t.Fatalf("UpsertSession() 错误: %v", err)
 	}
 
@@ -163,17 +165,18 @@ func TestUpdatePassword(t *testing.T) {
 func TestUpsertSession_CleansExpired(t *testing.T) {
 	s, db := newTestStore(t)
 	ctx := context.Background()
-	id := mustCreateUser(t, s, "dave")
+	u := mustCreateUser(t, s, "dave")
+	id := u.ID
 
 	// 直接插入一条已过期会话
 	if err := db.Create(&dbmodel.Session{
-		Xid: eid.New(eid.Session), UserID: id, DeviceID: "dev-old",
+		Xid: eid.New(eid.Session), UserID: id, UserXid: u.Xid, DeviceID: "dev-old",
 		TokenHash: "expired-hash", ExpiresAt: time.Now().Add(-time.Hour),
 	}).Error; err != nil {
 		t.Fatalf("插入过期会话失败: %v", err)
 	}
 
-	if err := s.UpsertSession(ctx, id, "dev-fresh", "", "fresh-hash", time.Now().Add(time.Hour)); err != nil {
+	if err := s.UpsertSession(ctx, id, u.Xid, "dev-fresh", "", "fresh-hash", time.Now().Add(time.Hour)); err != nil {
 		t.Fatalf("UpsertSession() 错误: %v", err)
 	}
 
@@ -189,9 +192,10 @@ func TestUpsertSession_CleansExpired(t *testing.T) {
 func TestUpsertSession_SameDevice(t *testing.T) {
 	s, db := newTestStore(t)
 	ctx := context.Background()
-	id := mustCreateUser(t, s, "frank")
+	u := mustCreateUser(t, s, "frank")
+	id := u.ID
 
-	if err := s.UpsertSession(ctx, id, "dev-1", "旧设备信息", "hash-1", time.Now().Add(time.Hour)); err != nil {
+	if err := s.UpsertSession(ctx, id, u.Xid, "dev-1", "旧设备信息", "hash-1", time.Now().Add(time.Hour)); err != nil {
 		t.Fatalf("UpsertSession() 错误: %v", err)
 	}
 	first, err := s.GetSessionByTokenHash(ctx, "hash-1")
@@ -205,7 +209,7 @@ func TestUpsertSession_SameDevice(t *testing.T) {
 		t.Fatalf("置 revoked_at 失败: %v", err)
 	}
 
-	if err := s.UpsertSession(ctx, id, "dev-1", "新设备信息", "hash-2", time.Now().Add(time.Hour)); err != nil {
+	if err := s.UpsertSession(ctx, id, u.Xid, "dev-1", "新设备信息", "hash-2", time.Now().Add(time.Hour)); err != nil {
 		t.Fatalf("UpsertSession() 错误: %v", err)
 	}
 
@@ -235,9 +239,10 @@ func TestUpsertSession_SameDevice(t *testing.T) {
 func TestRotateSession(t *testing.T) {
 	s, db := newTestStore(t)
 	ctx := context.Background()
-	id := mustCreateUser(t, s, "erin")
+	u := mustCreateUser(t, s, "erin")
+	id := u.ID
 
-	if err := s.UpsertSession(ctx, id, "dev-1", "", "old-hash", time.Now().Add(time.Hour)); err != nil {
+	if err := s.UpsertSession(ctx, id, u.Xid, "dev-1", "", "old-hash", time.Now().Add(time.Hour)); err != nil {
 		t.Fatalf("UpsertSession() 错误: %v", err)
 	}
 	old, err := s.GetSessionByTokenHash(ctx, "old-hash")
@@ -274,19 +279,19 @@ func TestRotateSession(t *testing.T) {
 func TestDeleteUserSessions(t *testing.T) {
 	s, _ := newTestStore(t)
 	ctx := context.Background()
-	id := mustCreateUser(t, s, "frank")
+	u := mustCreateUser(t, s, "frank")
 	other := mustCreateUser(t, s, "grace")
 
 	for _, h := range []string{"rt-1", "rt-2"} {
-		if err := s.UpsertSession(ctx, id, eid.New(eid.Device), "", h, time.Now().Add(time.Hour)); err != nil {
+		if err := s.UpsertSession(ctx, u.ID, u.Xid, eid.New(eid.Device), "", h, time.Now().Add(time.Hour)); err != nil {
 			t.Fatalf("UpsertSession() 错误: %v", err)
 		}
 	}
-	if err := s.UpsertSession(ctx, other, eid.New(eid.Device), "", "rt-other", time.Now().Add(time.Hour)); err != nil {
+	if err := s.UpsertSession(ctx, other.ID, other.Xid, eid.New(eid.Device), "", "rt-other", time.Now().Add(time.Hour)); err != nil {
 		t.Fatalf("UpsertSession() 错误: %v", err)
 	}
 
-	if err := DeleteUserSessions(ctx, s.q, id); err != nil {
+	if err := DeleteUserSessions(ctx, s.q, u.ID); err != nil {
 		t.Fatalf("DeleteUserSessions() 错误: %v", err)
 	}
 	for _, h := range []string{"rt-1", "rt-2"} {

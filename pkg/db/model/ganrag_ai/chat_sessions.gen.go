@@ -13,12 +13,13 @@ const TableNameChatSession = "chat_sessions"
 // ChatSession mapped from table <chat_sessions>
 type ChatSession struct {
 	ID            int64     `gorm:"column:id;primaryKey;autoIncrement:true" json:"id"`
-	Xid           string    `gorm:"column:xid;not null;comment:业务主键，形如 chs_<xid>（pkg/eid），对外标识" json:"xid"` // 业务主键，形如 chs_<xid>（pkg/eid），对外标识
-	UserID        int64     `gorm:"column:user_id;not null" json:"user_id"`
-	KbID          int64     `gorm:"column:kb_id;not null" json:"kb_id"`
+	Xid           string    `gorm:"column:xid;not null;comment:业务主键，形如 chs_<xid>（pkg/eid），对外标识" json:"xid"`      // 业务主键，形如 chs_<xid>（pkg/eid），对外标识
+	UserXid       string    `gorm:"column:user_xid;not null;comment:用户 usr_<xid> 全串（跨服务逻辑引用）" json:"user_xid"`   // 用户 usr_<xid> 全串（跨服务逻辑引用）
+	KbXid         string    `gorm:"column:kb_xid;not null;comment:知识库 kb_<xid> 全串；空串=全局（跨服务逻辑引用）" json:"kb_xid"` // 知识库 kb_<xid> 全串；空串=全局（跨服务逻辑引用）
 	Agent         string    `gorm:"column:agent;not null" json:"agent"`
 	Context       *string   `gorm:"column:context" json:"context"`
 	ContextMsgID  int64     `gorm:"column:context_msg_id;not null" json:"context_msg_id"`
+	ContextMsgXid string    `gorm:"column:context_msg_xid;not null;comment:上下文游标消息 msg_<xid> 全串（同服务冗余）" json:"context_msg_xid"` // 上下文游标消息 msg_<xid> 全串（同服务冗余）
 	Title         string    `gorm:"column:title;not null" json:"title"`
 	CreatedAt     time.Time `gorm:"column:created_at;not null;default:CURRENT_TIMESTAMP" json:"created_at"`
 	UpdatedAt     time.Time `gorm:"column:updated_at;not null;default:CURRENT_TIMESTAMP" json:"updated_at"`

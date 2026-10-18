@@ -12,14 +12,15 @@ const TableNameChatMessagePart = "chat_message_parts"
 
 // ChatMessagePart mapped from table <chat_message_parts>
 type ChatMessagePart struct {
-	ID        int64     `gorm:"column:id;primaryKey;autoIncrement:true" json:"id"`
-	MessageID int64     `gorm:"column:message_id;not null" json:"message_id"`
-	Step      int32     `gorm:"column:step;not null" json:"step"`
-	Seq       int32     `gorm:"column:seq;not null" json:"seq"`
-	Type      string    `gorm:"column:type;not null" json:"type"`
-	Content   *string   `gorm:"column:content" json:"content"`
-	Meta      *string   `gorm:"column:meta" json:"meta"`
-	CreatedAt time.Time `gorm:"column:created_at;not null;default:CURRENT_TIMESTAMP" json:"created_at"`
+	ID         int64     `gorm:"column:id;primaryKey;autoIncrement:true" json:"id"`
+	MessageID  int64     `gorm:"column:message_id;not null" json:"message_id"`
+	MessageXid string    `gorm:"column:message_xid;not null;comment:消息 msg_<xid> 全串（同服务冗余）" json:"message_xid"` // 消息 msg_<xid> 全串（同服务冗余）
+	Step       int32     `gorm:"column:step;not null" json:"step"`
+	Seq        int32     `gorm:"column:seq;not null" json:"seq"`
+	Type       string    `gorm:"column:type;not null" json:"type"`
+	Content    *string   `gorm:"column:content" json:"content"`
+	Meta       *string   `gorm:"column:meta" json:"meta"`
+	CreatedAt  time.Time `gorm:"column:created_at;not null;default:CURRENT_TIMESTAMP" json:"created_at"`
 }
 
 // TableName ChatMessagePart's table name

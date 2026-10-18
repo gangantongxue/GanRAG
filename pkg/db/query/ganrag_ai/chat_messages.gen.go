@@ -30,6 +30,7 @@ func newChatMessage(db *gorm.DB, opts ...gen.DOOption) chatMessage {
 	_chatMessage.ID = field.NewInt64(tableName, "id")
 	_chatMessage.Xid = field.NewString(tableName, "xid")
 	_chatMessage.SessionID = field.NewInt64(tableName, "session_id")
+	_chatMessage.SessionXid = field.NewString(tableName, "session_xid")
 	_chatMessage.Role = field.NewInt32(tableName, "role")
 	_chatMessage.Agent = field.NewString(tableName, "agent")
 	_chatMessage.Content = field.NewString(tableName, "content")
@@ -43,14 +44,15 @@ func newChatMessage(db *gorm.DB, opts ...gen.DOOption) chatMessage {
 type chatMessage struct {
 	chatMessageDo chatMessageDo
 
-	ALL       field.Asterisk
-	ID        field.Int64
-	Xid       field.String // 业务主键，形如 msg_<xid>（pkg/eid），对外标识
-	SessionID field.Int64
-	Role      field.Int32
-	Agent     field.String
-	Content   field.String
-	CreatedAt field.Time
+	ALL        field.Asterisk
+	ID         field.Int64
+	Xid        field.String // 业务主键，形如 msg_<xid>（pkg/eid），对外标识
+	SessionID  field.Int64
+	SessionXid field.String // 会话 chs_<xid> 全串（同服务冗余）
+	Role       field.Int32
+	Agent      field.String
+	Content    field.String
+	CreatedAt  field.Time
 
 	fieldMap map[string]field.Expr
 }
@@ -70,6 +72,7 @@ func (c *chatMessage) updateTableName(table string) *chatMessage {
 	c.ID = field.NewInt64(table, "id")
 	c.Xid = field.NewString(table, "xid")
 	c.SessionID = field.NewInt64(table, "session_id")
+	c.SessionXid = field.NewString(table, "session_xid")
 	c.Role = field.NewInt32(table, "role")
 	c.Agent = field.NewString(table, "agent")
 	c.Content = field.NewString(table, "content")
@@ -100,10 +103,11 @@ func (c *chatMessage) GetFieldByName(fieldName string) (field.OrderExpr, bool) {
 }
 
 func (c *chatMessage) fillFieldMap() {
-	c.fieldMap = make(map[string]field.Expr, 7)
+	c.fieldMap = make(map[string]field.Expr, 8)
 	c.fieldMap["id"] = c.ID
 	c.fieldMap["xid"] = c.Xid
 	c.fieldMap["session_id"] = c.SessionID
+	c.fieldMap["session_xid"] = c.SessionXid
 	c.fieldMap["role"] = c.Role
 	c.fieldMap["agent"] = c.Agent
 	c.fieldMap["content"] = c.Content

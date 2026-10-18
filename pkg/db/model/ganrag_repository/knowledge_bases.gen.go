@@ -8,13 +8,13 @@ import (
 	"time"
 )
 
-const TableNameKnowledgeBasis = "knowledge_bases"
+const TableNameKnowledgeBase = "knowledge_bases"
 
-// KnowledgeBasis mapped from table <knowledge_bases>
-type KnowledgeBasis struct {
+// KnowledgeBase mapped from table <knowledge_bases>
+type KnowledgeBase struct {
 	ID           int64     `gorm:"column:id;primaryKey;autoIncrement:true" json:"id"`
-	Xid          string    `gorm:"column:xid;not null;comment:业务主键，形如 kb_<xid>（pkg/eid），对外标识" json:"xid"` // 业务主键，形如 kb_<xid>（pkg/eid），对外标识
-	OwnerID      int64     `gorm:"column:owner_id;not null" json:"owner_id"`
+	Xid          string    `gorm:"column:xid;not null;comment:业务主键，形如 kb_<xid>（pkg/eid），对外标识" json:"xid"`       // 业务主键，形如 kb_<xid>（pkg/eid），对外标识
+	OwnerXid     string    `gorm:"column:owner_xid;not null;comment:库主 usr_<xid> 全串（跨服务逻辑引用）" json:"owner_xid"` // 库主 usr_<xid> 全串（跨服务逻辑引用）
 	Name         string    `gorm:"column:name;not null" json:"name"`
 	Description  string    `gorm:"column:description;not null" json:"description"`
 	Visibility   int32     `gorm:"column:visibility;not null" json:"visibility"`
@@ -24,7 +24,7 @@ type KnowledgeBasis struct {
 	UpdatedAt    time.Time `gorm:"column:updated_at;not null;default:CURRENT_TIMESTAMP" json:"updated_at"`
 }
 
-// TableName KnowledgeBasis's table name
-func (*KnowledgeBasis) TableName() string {
-	return TableNameKnowledgeBasis
+// TableName KnowledgeBase's table name
+func (*KnowledgeBase) TableName() string {
+	return TableNameKnowledgeBase
 }

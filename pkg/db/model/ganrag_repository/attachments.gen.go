@@ -15,15 +15,18 @@ type Attachment struct {
 	ID           int64     `gorm:"column:id;primaryKey;autoIncrement:true" json:"id"`
 	Xid          string    `gorm:"column:xid;not null;comment:业务主键，形如 att_<xid>（pkg/eid），对外标识（稳定 URL）" json:"xid"` // 业务主键，形如 att_<xid>（pkg/eid），对外标识（稳定 URL）
 	KbID         int64     `gorm:"column:kb_id;not null" json:"kb_id"`
+	KbXid        string    `gorm:"column:kb_xid;not null;comment:知识库 kb_<xid> 全串（同服务冗余）" json:"kb_xid"` // 知识库 kb_<xid> 全串（同服务冗余）
 	ArticleID    int64     `gorm:"column:article_id;not null" json:"article_id"`
+	ArticleXid   string    `gorm:"column:article_xid;not null;comment:文章 art_<xid> 全串（同服务冗余）" json:"article_xid"` // 文章 art_<xid> 全串（同服务冗余）
 	Kind         int32     `gorm:"column:kind;not null" json:"kind"`
 	FileKey      string    `gorm:"column:file_key;not null" json:"file_key"`
+	ObjectXid    string    `gorm:"column:object_xid;not null;comment:对象 obj_<xid>（Garage key: o/<object_xid>）" json:"object_xid"` // 对象 obj_<xid>（Garage key: o/<object_xid>）
 	RelativePath string    `gorm:"column:relative_path;not null" json:"relative_path"`
 	OriginalName string    `gorm:"column:original_name;not null" json:"original_name"`
 	ContentType  string    `gorm:"column:content_type;not null" json:"content_type"`
 	Size         int64     `gorm:"column:size;not null" json:"size"`
 	Sha256       string    `gorm:"column:sha256;not null" json:"sha256"`
-	CreatedBy    int64     `gorm:"column:created_by;not null" json:"created_by"`
+	CreatedByXid string    `gorm:"column:created_by_xid;not null;comment:上传者 usr_<xid> 全串（跨服务逻辑引用）" json:"created_by_xid"` // 上传者 usr_<xid> 全串（跨服务逻辑引用）
 	CreatedAt    time.Time `gorm:"column:created_at;not null;default:CURRENT_TIMESTAMP" json:"created_at"`
 }
 

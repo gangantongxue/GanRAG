@@ -12,16 +12,19 @@ const TableNameArticle = "articles"
 
 // Article mapped from table <articles>
 type Article struct {
-	ID         int64     `gorm:"column:id;primaryKey;autoIncrement:true" json:"id"`
-	Xid        string    `gorm:"column:xid;not null;comment:业务主键，形如 art_<xid>（pkg/eid），对外标识" json:"xid"` // 业务主键，形如 art_<xid>（pkg/eid），对外标识
-	KbID       int64     `gorm:"column:kb_id;not null" json:"kb_id"`
-	DirID      int64     `gorm:"column:dir_id;not null" json:"dir_id"`
-	Type       int32     `gorm:"column:type;not null" json:"type"`
-	Title      string    `gorm:"column:title;not null" json:"title"`
-	ContentKey string    `gorm:"column:content_key;not null" json:"content_key"`
-	CreatedBy  int64     `gorm:"column:created_by;not null" json:"created_by"`
-	CreatedAt  time.Time `gorm:"column:created_at;not null;default:CURRENT_TIMESTAMP" json:"created_at"`
-	UpdatedAt  time.Time `gorm:"column:updated_at;not null;default:CURRENT_TIMESTAMP" json:"updated_at"`
+	ID               int64     `gorm:"column:id;primaryKey;autoIncrement:true" json:"id"`
+	Xid              string    `gorm:"column:xid;not null;comment:业务主键，形如 art_<xid>（pkg/eid），对外标识" json:"xid"` // 业务主键，形如 art_<xid>（pkg/eid），对外标识
+	KbID             int64     `gorm:"column:kb_id;not null" json:"kb_id"`
+	KbXid            string    `gorm:"column:kb_xid;not null;comment:知识库 kb_<xid> 全串（同服务冗余）" json:"kb_xid"` // 知识库 kb_<xid> 全串（同服务冗余）
+	DirID            int64     `gorm:"column:dir_id;not null" json:"dir_id"`
+	DirXid           string    `gorm:"column:dir_xid;not null;comment:目录 dir_<xid> 全串；空串=根（同服务冗余）" json:"dir_xid"` // 目录 dir_<xid> 全串；空串=根（同服务冗余）
+	Type             int32     `gorm:"column:type;not null" json:"type"`
+	Title            string    `gorm:"column:title;not null" json:"title"`
+	ContentKey       string    `gorm:"column:content_key;not null" json:"content_key"`
+	ContentObjectXid string    `gorm:"column:content_object_xid;not null;comment:正文对象 obj_<xid>（Garage key: o/<object_xid>）" json:"content_object_xid"` // 正文对象 obj_<xid>（Garage key: o/<object_xid>）
+	CreatedByXid     string    `gorm:"column:created_by_xid;not null;comment:创建者 usr_<xid> 全串（跨服务逻辑引用）" json:"created_by_xid"`                          // 创建者 usr_<xid> 全串（跨服务逻辑引用）
+	CreatedAt        time.Time `gorm:"column:created_at;not null;default:CURRENT_TIMESTAMP" json:"created_at"`
+	UpdatedAt        time.Time `gorm:"column:updated_at;not null;default:CURRENT_TIMESTAMP" json:"updated_at"`
 }
 
 // TableName Article's table name

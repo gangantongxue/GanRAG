@@ -29,6 +29,7 @@ func newChatMessagePart(db *gorm.DB, opts ...gen.DOOption) chatMessagePart {
 	_chatMessagePart.ALL = field.NewAsterisk(tableName)
 	_chatMessagePart.ID = field.NewInt64(tableName, "id")
 	_chatMessagePart.MessageID = field.NewInt64(tableName, "message_id")
+	_chatMessagePart.MessageXid = field.NewString(tableName, "message_xid")
 	_chatMessagePart.Step = field.NewInt32(tableName, "step")
 	_chatMessagePart.Seq = field.NewInt32(tableName, "seq")
 	_chatMessagePart.Type = field.NewString(tableName, "type")
@@ -44,15 +45,16 @@ func newChatMessagePart(db *gorm.DB, opts ...gen.DOOption) chatMessagePart {
 type chatMessagePart struct {
 	chatMessagePartDo chatMessagePartDo
 
-	ALL       field.Asterisk
-	ID        field.Int64
-	MessageID field.Int64
-	Step      field.Int32
-	Seq       field.Int32
-	Type      field.String
-	Content   field.String
-	Meta      field.String
-	CreatedAt field.Time
+	ALL        field.Asterisk
+	ID         field.Int64
+	MessageID  field.Int64
+	MessageXid field.String // 消息 msg_<xid> 全串（同服务冗余）
+	Step       field.Int32
+	Seq        field.Int32
+	Type       field.String
+	Content    field.String
+	Meta       field.String
+	CreatedAt  field.Time
 
 	fieldMap map[string]field.Expr
 }
@@ -71,6 +73,7 @@ func (c *chatMessagePart) updateTableName(table string) *chatMessagePart {
 	c.ALL = field.NewAsterisk(table)
 	c.ID = field.NewInt64(table, "id")
 	c.MessageID = field.NewInt64(table, "message_id")
+	c.MessageXid = field.NewString(table, "message_xid")
 	c.Step = field.NewInt32(table, "step")
 	c.Seq = field.NewInt32(table, "seq")
 	c.Type = field.NewString(table, "type")
@@ -105,9 +108,10 @@ func (c *chatMessagePart) GetFieldByName(fieldName string) (field.OrderExpr, boo
 }
 
 func (c *chatMessagePart) fillFieldMap() {
-	c.fieldMap = make(map[string]field.Expr, 8)
+	c.fieldMap = make(map[string]field.Expr, 9)
 	c.fieldMap["id"] = c.ID
 	c.fieldMap["message_id"] = c.MessageID
+	c.fieldMap["message_xid"] = c.MessageXid
 	c.fieldMap["step"] = c.Step
 	c.fieldMap["seq"] = c.Seq
 	c.fieldMap["type"] = c.Type

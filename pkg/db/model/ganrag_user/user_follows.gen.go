@@ -12,9 +12,11 @@ const TableNameUserFollow = "user_follows"
 
 // UserFollow mapped from table <user_follows>
 type UserFollow struct {
-	FollowerID int64     `gorm:"column:follower_id;primaryKey" json:"follower_id"`
-	FolloweeID int64     `gorm:"column:followee_id;primaryKey" json:"followee_id"`
-	CreatedAt  time.Time `gorm:"column:created_at;not null;default:CURRENT_TIMESTAMP" json:"created_at"`
+	FollowerID  int64     `gorm:"column:follower_id;primaryKey" json:"follower_id"`
+	FollowerXid string    `gorm:"column:follower_xid;not null;comment:关注者 usr_<xid> 全串（同服务冗余）" json:"follower_xid"` // 关注者 usr_<xid> 全串（同服务冗余）
+	FolloweeID  int64     `gorm:"column:followee_id;primaryKey" json:"followee_id"`
+	FolloweeXid string    `gorm:"column:followee_xid;not null;comment:被关注者 usr_<xid> 全串（同服务冗余）" json:"followee_xid"` // 被关注者 usr_<xid> 全串（同服务冗余）
+	CreatedAt   time.Time `gorm:"column:created_at;not null;default:CURRENT_TIMESTAMP" json:"created_at"`
 }
 
 // TableName UserFollow's table name

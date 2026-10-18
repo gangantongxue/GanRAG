@@ -40,6 +40,8 @@ var schemata = []schemaSpec{
 	{DBName: "ganrag_user", Tables: []string{"users", "sessions", "user_follows"}},
 	{DBName: "ganrag_repository", Tables: []string{"knowledge_bases", "directories", "articles", "attachments", "kb_user_relations"}},
 	{DBName: "ganrag_ai", Tables: []string{"chat_sessions", "chat_messages", "chat_message_parts"}},
+	// ganrag_common：跨服务共享基础设施表（失败任务/异步 outbox），业务服务通过 pkg/asynctask 访问
+	{DBName: "ganrag_common", Tables: []string{"async_tasks"}},
 }
 
 func main() {
@@ -126,8 +128,17 @@ func generate(gdb *gorm.DB, s schemaSpec) error {
 	})
 	g.UseDB(gdb)
 
+	// 个别表名复数转单数不符合业务命名，显式指定模型名（表名不变）
+	modelNames := map[string]string{
+		"knowledge_bases": "KnowledgeBase",
+	}
+
 	models := make([]any, 0, len(s.Tables))
 	for _, t := range s.Tables {
+		if name, ok := modelNames[t]; ok {
+			models = append(models, g.GenerateModelAs(t, name))
+			continue
+		}
 		models = append(models, g.GenerateModel(t))
 	}
 	g.ApplyBasic(models...)

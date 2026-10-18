@@ -30,6 +30,7 @@ func newSession(db *gorm.DB, opts ...gen.DOOption) session {
 	_session.ID = field.NewInt64(tableName, "id")
 	_session.Xid = field.NewString(tableName, "xid")
 	_session.UserID = field.NewInt64(tableName, "user_id")
+	_session.UserXid = field.NewString(tableName, "user_xid")
 	_session.DeviceID = field.NewString(tableName, "device_id")
 	_session.DeviceInfo = field.NewString(tableName, "device_info")
 	_session.TokenHash = field.NewString(tableName, "token_hash")
@@ -50,6 +51,7 @@ type session struct {
 	ID           field.Int64
 	Xid          field.String // 业务主键，形如 ses_<xid>（pkg/eid），对外标识（设备管理接口用）
 	UserID       field.Int64
+	UserXid      field.String // 用户 usr_<xid> 全串（同服务冗余）
 	DeviceID     field.String
 	DeviceInfo   field.String
 	TokenHash    field.String
@@ -76,6 +78,7 @@ func (s *session) updateTableName(table string) *session {
 	s.ID = field.NewInt64(table, "id")
 	s.Xid = field.NewString(table, "xid")
 	s.UserID = field.NewInt64(table, "user_id")
+	s.UserXid = field.NewString(table, "user_xid")
 	s.DeviceID = field.NewString(table, "device_id")
 	s.DeviceInfo = field.NewString(table, "device_info")
 	s.TokenHash = field.NewString(table, "token_hash")
@@ -107,10 +110,11 @@ func (s *session) GetFieldByName(fieldName string) (field.OrderExpr, bool) {
 }
 
 func (s *session) fillFieldMap() {
-	s.fieldMap = make(map[string]field.Expr, 10)
+	s.fieldMap = make(map[string]field.Expr, 11)
 	s.fieldMap["id"] = s.ID
 	s.fieldMap["xid"] = s.Xid
 	s.fieldMap["user_id"] = s.UserID
+	s.fieldMap["user_xid"] = s.UserXid
 	s.fieldMap["device_id"] = s.DeviceID
 	s.fieldMap["device_info"] = s.DeviceInfo
 	s.fieldMap["token_hash"] = s.TokenHash

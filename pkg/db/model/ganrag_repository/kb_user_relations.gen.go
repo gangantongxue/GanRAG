@@ -13,7 +13,8 @@ const TableNameKbUserRelation = "kb_user_relations"
 // KbUserRelation mapped from table <kb_user_relations>
 type KbUserRelation struct {
 	KbID      int64      `gorm:"column:kb_id;primaryKey" json:"kb_id"`
-	UserID    int64      `gorm:"column:user_id;primaryKey" json:"user_id"`
+	KbXid     string     `gorm:"column:kb_xid;not null;comment:知识库 kb_<xid> 全串（同服务冗余）" json:"kb_xid"`         // 知识库 kb_<xid> 全串（同服务冗余）
+	UserXid   string     `gorm:"column:user_xid;primaryKey;comment:用户 usr_<xid> 全串（跨服务逻辑引用）" json:"user_xid"` // 用户 usr_<xid> 全串（跨服务逻辑引用）
 	Role      int32      `gorm:"column:role;not null" json:"role"`
 	Starred   int32      `gorm:"column:starred;not null" json:"starred"`
 	StarredAt *time.Time `gorm:"column:starred_at" json:"starred_at"`
