@@ -188,7 +188,7 @@ CREATE TABLE attachments (
 );
 ```
 
-- **对象存储**：Garage（S3）单共享桶 + 统一对象 key `o/<obj_xid>`（不按知识库分桶、不设图片专属目录）；Repository 是唯一直接访问方，Gateway 验签 + 路由后由 Repository 校验权限并签发 Presigned URL（302）
+- **对象存储**：Garage（S3）单共享桶 + 统一对象 key `o/<obj_xid>`（不按知识库分桶、不设图片专属目录）；Repository 是唯一直接访问方，Gateway 验签 + 路由后由 Repository 校验权限并流式返回（Garage 不对外暴露）
 - 稳定 URL 形如 `/api/v1/attachments/<xid>`，经 gateway 鉴权（公开库可见、私有库校验成员）后转发
 - 附件归单篇文章独占，不跨文章共享（文章复制需复制附件行与对象）；kind=2 保存时按正文相对路径引用全量重建、孤儿即时清理；kind=1 随文章删除清理；`relative_path` 只存规范化相对路径（禁绝对路径、禁 `..` 越权）
 

@@ -314,7 +314,7 @@ CREATE TABLE attachments (
 | idx_attachments_article | (article_id, kind) | 文章附件清理/列举 |
 | idx_attachments_kb | (kb_id) | 库内清理 |
 
-约定：附件归单篇文章独占，不跨文章共享（文章复制需复制附件行与对象）；Repository 是 Garage 唯一直接访问方，Gateway 验签路由后由 Repository 校验权限并签发 Presigned URL（302）；`relative_path` 只存规范化相对路径（禁绝对路径、禁 `..` 越权）。
+约定：附件归单篇文章独占，不跨文章共享（文章复制需复制附件行与对象）；Repository 是 Garage 唯一直接访问方，Gateway 验签路由后由 Repository 校验权限并流式返回（Garage 不对外暴露）；`relative_path` 只存规范化相对路径（禁绝对路径、禁 `..` 越权）。
 
 ## kb_user_relations 知识库×用户关系
 

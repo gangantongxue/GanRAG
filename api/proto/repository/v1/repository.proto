@@ -1,0 +1,403 @@
+syntax = "proto3";
+
+package repository.v1;
+
+option go_package = "github.com/gangantongxue/GanRAG/api/gen/repository/v1;repositoryv1";
+
+// RepositoryService：知识库 / 目录树 / 文章 / 附件的业务边界，也是对象存储
+// （Garage，S3 协议）的唯一直接访问方。上传、下载均经 gRPC，Garage 不对外暴露。
+//
+// 【口径约定】（对齐根 AGENTS.md 与 docs/database.md「ganrag_repository」）：
+//   - 对外标识一律 xid 全串（pkg/eid）：知识库 kb_、目录 dir_、文章 art_、
+//     附件 att_、对象 obj_、用户 usr_、上传会话 upl_；数据库自增 id 不出服务
+//   - 身份注入：user_xid 由 Gateway 从 access token 解析后注入，不信任请求体；
+//     公开库只读接口允许匿名，user_xid 传空串
+//   - 权限：私有库仅 owner 读写（P1；成员 reader/editor 表已就绪、接口随 P2 开放）；
+//     公开库匿名只读。无权限 / 不存在统一 NotFound（防枚举）
+//   - 错误统一走 pkg/errcode：InvalidArgument 参数不合法或超限；NotFound 不存在
+//     或无权限（含上传会话过期/不存在）；DataLoss 上传完整性校验失败；Internal 内部错误
+//   - 上传上限（可配）：整段 2MB、单分片 2MB、文件总大小 100MB、上传会话 TTL 24h
+//   - 完整性校验三层：① 单片 sha256（收片即验，坏片只重传该片）② 合并前结构校验
+//     （分片 1..N 连续、Σ大小 == total_size）③ 合并后读回对象计算 sha256 与
+//     InitUpload 声明值比对（端到端锚点，不符 DataLoss 作废重传）
+//   - 前端口径：sha256 用 Web Crypto（crypto.subtle.digest）预先计算；文件超过整段
+//     上限主动走分片，整段报错（InvalidArgument「content too large」）自动降级分片；
+//     上传中断用 GetUploadStatus 查已收分片后补传（断点续传）
+service RepositoryService {
+  // ---- 知识库 ----
+  // CreateKnowledgeBase 创建知识库（同 owner 下库名唯一）
+  rpc CreateKnowledgeBase(CreateKnowledgeBaseRequest) returns (CreateKnowledgeBaseResponse);
+  // GetKnowledgeBase 查询知识库（私有库仅 owner；公开库匿名可读）
+  rpc GetKnowledgeBase(GetKnowledgeBaseRequest) returns (GetKnowledgeBaseResponse);
+  // ListKnowledgeBases 分页列表（scope：1 我拥有的 2 我参与的 3 公开 4 全部可见）
+  rpc ListKnowledgeBases(ListKnowledgeBasesRequest) returns (ListKnowledgeBasesResponse);
+  // UpdateKnowledgeBase 更新知识库（可变字段全量替换，仅 owner）
+  rpc UpdateKnowledgeBase(UpdateKnowledgeBaseRequest) returns (UpdateKnowledgeBaseResponse);
+  // DeleteKnowledgeBase 删除知识库（级联目录/文章/附件行与对象，应用层事务，仅 owner）
+  rpc DeleteKnowledgeBase(DeleteKnowledgeBaseRequest) returns (DeleteKnowledgeBaseResponse);
+
+  // ---- 目录树 ----
+  // CreateDirectory 创建目录（同一父目录下名称唯一，仅 owner / editor）
+  rpc CreateDirectory(CreateDirectoryRequest) returns (CreateDirectoryResponse);
+  // UpdateDirectory 目录改名（仅 owner / editor）
+  rpc UpdateDirectory(UpdateDirectoryRequest) returns (UpdateDirectoryResponse);
+  // MoveDirectory 移动目录（禁止移入自身或子孙目录，仅 owner / editor）
+  rpc MoveDirectory(MoveDirectoryRequest) returns (MoveDirectoryResponse);
+  // DeleteDirectory 删除目录（级联子目录、文章、附件行与对象，仅 owner / editor）
+  rpc DeleteDirectory(DeleteDirectoryRequest) returns (DeleteDirectoryResponse);
+  // GetDirectoryTree 目录树（平铺目录 + 文章清单，前端自建树）
+  rpc GetDirectoryTree(GetDirectoryTreeRequest) returns (GetDirectoryTreeResponse);
+
+  // ---- 文章 ----
+  // CreateArticle 创建文章（正文与附件先经上传接口得 object_xid，此处只引用）
+  rpc CreateArticle(CreateArticleRequest) returns (CreateArticleResponse);
+  // GetArticle 文章元信息 + 附件清单（正文经 GetArticleContent 另取）
+  rpc GetArticle(GetArticleRequest) returns (GetArticleResponse);
+  // GetArticleContent 正文内容（md/txt 流式，首消息 meta 后续 data）
+  rpc GetArticleContent(GetArticleContentRequest) returns (stream DownloadChunk);
+  // UpdateArticle 更新文章（title/dir 全量替换；content_object_xid 空串 = 保留原正文；
+  // attachments 全量重建 kind=2，空 = 清空，孤儿对象即时清理）
+  rpc UpdateArticle(UpdateArticleRequest) returns (UpdateArticleResponse);
+  // DeleteArticle 删除文章（级联附件行与对象，仅 owner / editor）
+  rpc DeleteArticle(DeleteArticleRequest) returns (DeleteArticleResponse);
+  // ResolveReference 互链解析：以当前文章为基准解析 Markdown 相对路径，
+  // 返回目标文章或文件引用；断链统一 NotFound（渲染标记失效、防枚举）
+  rpc ResolveReference(ResolveReferenceRequest) returns (ResolveReferenceResponse);
+
+  // ---- 资源（图片 / 附件）----
+  // GetResource 按「当前文章 + 规范化 relative_path」寻址附件并流式返回
+  // （首消息 meta 后续 data；禁绝对路径、禁 .. 逃逸知识库；无权限统一 NotFound）
+  rpc GetResource(GetResourceRequest) returns (stream DownloadChunk);
+
+  // ---- 上传（整段 + 会话式分片，断点续传 + 三层完整性校验）----
+  // UploadWhole 整段上传小文件（≤ 2MB）；超限 InvalidArgument
+  // 「content too large, use chunked upload」→ 前端自动降级分片
+  rpc UploadWhole(UploadWholeRequest) returns (UploadWholeResponse);
+  // InitUpload 开启分片上传会话（声明 total_size 与全文件 sha256 作为校验锚点）
+  rpc InitUpload(InitUploadRequest) returns (InitUploadResponse);
+  // UploadPart 上传单个分片（≤ part_size_limit；同 part_number 重传幂等覆盖；
+  // 分片 sha256 不符 InvalidArgument，前端只重传该片）
+  rpc UploadPart(UploadPartRequest) returns (UploadPartResponse);
+  // GetUploadStatus 查询已收分片（断点续传：前端只补缺失片，已传片可不重传）
+  rpc GetUploadStatus(GetUploadStatusRequest) returns (GetUploadStatusResponse);
+  // CompleteUpload 合并分片并落对象：②结构校验（缺片 InvalidArgument，可补传后重试）
+  // → ③合并后读回 sha256 对比声明值（不符 DataLoss，会话作废需整文件重传）
+  rpc CompleteUpload(CompleteUploadRequest) returns (CompleteUploadResponse);
+  // AbortUpload 取消上传会话，清理已传分片
+  rpc AbortUpload(AbortUploadRequest) returns (AbortUploadResponse);
+}
+
+// ===================== 公共消息 =====================
+
+// KnowledgeBase 知识库（表 knowledge_bases）
+message KnowledgeBase {
+  string xid = 1;              // 业务主键 kb_<xid> 全串
+  string owner_xid = 2;        // 库主 usr_<xid>
+  string name = 3;             // 库名，同一 owner 下唯一
+  string description = 4;      // 描述，可空串
+  int32 visibility = 5;        // 0 私有 1 公开（公开库陌生人只读）
+  int32 article_count = 6;     // 冗余计数
+  int32 star_count = 7;        // 冗余计数（star 接口随 P2 开放）
+  int64 created_at_unix = 8;   // 创建时间（Unix 秒）
+  int64 updated_at_unix = 9;   // 更新时间（Unix 秒）
+}
+
+// Directory 目录（表 directories；parent_xid 空串表示根）
+message Directory {
+  string xid = 1;              // 业务主键 dir_<xid> 全串
+  string kb_xid = 2;           // 所属知识库
+  string parent_xid = 3;       // 父目录 dir_<xid>，空串 = 根
+  string name = 4;             // 目录名，同一父目录下唯一
+  int64 created_at_unix = 5;
+  int64 updated_at_unix = 6;
+}
+
+// Article 文章（表 articles；正文内容不在此消息，经 GetArticleContent 流式获取）
+message Article {
+  string xid = 1;              // 业务主键 art_<xid> 全串
+  string kb_xid = 2;           // 所属知识库
+  string dir_xid = 3;          // 所属目录 dir_<xid>，空串 = 根
+  int32 type = 4;              // 原始格式：1 md 2 txt（3 pdf 4 docx 5 html 随 P1.5）
+  string title = 5;            // 标题（不唯一，引用靠 xid）
+  string created_by_xid = 6;   // 创建者 usr_<xid>
+  int64 created_at_unix = 7;
+  int64 updated_at_unix = 8;
+}
+
+// Attachment 附件（表 attachments，P1 仅 kind=2 内嵌图片/文件；行随文章保存全量重建）
+message Attachment {
+  string xid = 1;              // 业务主键 att_<xid> 全串
+  string relative_path = 2;    // 规范化相对路径（如 assets/logo.png），(article, path) 唯一
+  string object_xid = 3;       // 对象标识 obj_<xid>（Garage key：o/<object_xid>）
+  string original_name = 4;    // 原始文件名（仅展示）
+  string content_type = 5;     // MIME 类型
+  uint64 size = 6;             // 字节数
+  int64 created_at_unix = 7;
+}
+
+// AttachmentRef 附件引用（写接口入参：文章保存时全量清单，服务端按正文链接语义重建）
+message AttachmentRef {
+  string relative_path = 1;    // 规范化相对路径（禁绝对路径、禁 ..）
+  string object_xid = 2;       // 上传接口返回的对象标识
+}
+
+// UploadResult 上传结果（整段与分片合并通用）
+message UploadResult {
+  string object_xid = 1;       // 对象标识 obj_<xid>，供文章/附件引用
+  uint64 size = 2;             // 字节数（服务端实测）
+  string sha256 = 3;           // 完整性校验值（服务端计算，落 attachments.sha256）
+  string content_type = 4;     // MIME 类型
+}
+
+// DownloadChunk 下载分块：首条消息必须是 meta，其余为 data，data 顺序拼接即完整内容
+message DownloadChunk {
+  oneof chunk {
+    DownloadMeta meta = 1;
+    bytes data = 2;
+  }
+}
+
+// DownloadMeta 下载元信息（流首消息）
+message DownloadMeta {
+  string content_type = 1;     // MIME 类型（text/markdown 等）
+  uint64 size = 2;             // 总字节数
+}
+
+// ===================== 知识库 =====================
+
+message CreateKnowledgeBaseRequest {
+  string user_xid = 1;         // 操作者（Gateway 注入，下同）
+  string name = 2;             // 1-100 字符
+  string description = 3;      // ≤500 字符，可空
+  int32 visibility = 4;        // 0 私有 1 公开
+}
+message CreateKnowledgeBaseResponse {
+  KnowledgeBase knowledge_base = 1;
+}
+
+message GetKnowledgeBaseRequest {
+  string user_xid = 1;         // 公开库匿名可读，传空串
+  string kb_xid = 2;
+}
+message GetKnowledgeBaseResponse {
+  KnowledgeBase knowledge_base = 1;
+  bool can_edit = 2;           // 当前用户是否可写（P1：owner；P2 起含 editor）
+}
+
+message ListKnowledgeBasesRequest {
+  string user_xid = 1;
+  int32 scope = 2;             // 1 我拥有的 2 我参与的 3 公开 4 全部可见（我的+参与+公开）
+  int32 page = 3;              // 页码，从 1 开始
+  int32 page_size = 4;         // 默认 20，上限 100
+}
+message ListKnowledgeBasesResponse {
+  repeated KnowledgeBase items = 1;
+  int32 total = 2;             // 总数（分页用）
+}
+
+message UpdateKnowledgeBaseRequest {
+  string user_xid = 1;
+  string kb_xid = 2;
+  string name = 3;             // 全量替换：新库名
+  string description = 4;      // 全量替换：空串 = 清空
+  int32 visibility = 5;        // 全量替换：0 私有 1 公开
+}
+message UpdateKnowledgeBaseResponse {
+  KnowledgeBase knowledge_base = 1;
+}
+
+message DeleteKnowledgeBaseRequest {
+  string user_xid = 1;
+  string kb_xid = 2;
+}
+message DeleteKnowledgeBaseResponse {}
+
+// ===================== 目录树 =====================
+
+message CreateDirectoryRequest {
+  string user_xid = 1;
+  string kb_xid = 2;
+  string parent_xid = 3;       // 空串 = 根
+  string name = 4;             // 1-100 字符
+}
+message CreateDirectoryResponse {
+  Directory directory = 1;
+}
+
+message UpdateDirectoryRequest {
+  string user_xid = 1;
+  string dir_xid = 2;
+  string name = 3;             // 新名称（全量替换）
+}
+message UpdateDirectoryResponse {
+  Directory directory = 1;
+}
+
+message MoveDirectoryRequest {
+  string user_xid = 1;
+  string dir_xid = 2;
+  string parent_xid = 3;       // 目标父目录，空串 = 根；禁移入自身或子孙（InvalidArgument）
+}
+message MoveDirectoryResponse {
+  Directory directory = 1;
+}
+
+message DeleteDirectoryRequest {
+  string user_xid = 1;
+  string dir_xid = 2;
+}
+message DeleteDirectoryResponse {}
+
+message GetDirectoryTreeRequest {
+  string user_xid = 1;
+  string kb_xid = 2;
+}
+message GetDirectoryTreeResponse {
+  repeated Directory directories = 1;  // 平铺，前端按 parent_xid 自建树
+  repeated Article articles = 2;       // 平铺，按 dir_xid 归属
+}
+
+// ===================== 文章 =====================
+
+message CreateArticleRequest {
+  string user_xid = 1;
+  string kb_xid = 2;
+  string dir_xid = 3;               // 空串 = 根
+  int32 type = 4;                   // 1 md 2 txt
+  string title = 5;                 // 1-200 字符
+  string content_object_xid = 6;    // 正文 md 对象（上传接口返回；保存 = 新对象落库后换指针删旧）
+  repeated AttachmentRef attachments = 7;  // kind=2 全量清单
+}
+message CreateArticleResponse {
+  Article article = 1;
+}
+
+message GetArticleRequest {
+  string user_xid = 1;              // 公开库匿名可读，传空串
+  string article_xid = 2;
+}
+message GetArticleResponse {
+  Article article = 1;
+  bool can_edit = 2;                // 当前用户是否可写
+  repeated Attachment attachments = 3;  // 附件清单（保存时全量重建的基准）
+}
+
+message GetArticleContentRequest {
+  string user_xid = 1;
+  string article_xid = 2;
+}
+// 返回 stream DownloadChunk：meta（text/markdown）→ data 分块
+
+message UpdateArticleRequest {
+  string user_xid = 1;
+  string article_xid = 2;
+  string dir_xid = 3;               // 全量替换：目标目录，空串 = 根（即移动）
+  string title = 4;                 // 全量替换：新标题
+  string content_object_xid = 5;    // 空串 = 保留原正文；非空 = 换正文并删旧对象
+  repeated AttachmentRef attachments = 6;  // 全量重建 kind=2（空 = 清空，孤儿对象即时清理）
+}
+message UpdateArticleResponse {
+  Article article = 1;
+}
+
+message DeleteArticleRequest {
+  string user_xid = 1;
+  string article_xid = 2;
+}
+message DeleteArticleResponse {}
+
+message ResolveReferenceRequest {
+  string user_xid = 1;
+  string article_xid = 2;           // 当前文章（相对路径解析基准）
+  string relative_path = 3;         // Markdown 中的相对路径
+}
+// ResolveReferenceResponse 解析结果（断链 / 无权限统一 NotFound）
+message ResolveReferenceResponse {
+  oneof target {
+    ArticleRef article = 1;         // 互链目标文章（跳文章页 /api/v1/articles/<xid>）
+    ResourceRef resource = 2;       // 文件引用（前端拼资源路由取流）
+  }
+}
+
+// ArticleRef 互链目标文章
+message ArticleRef {
+  string xid = 1;                   // art_<xid>
+  string title = 2;
+}
+
+// ResourceRef 文件引用存在性确认（前端以「当前文章 + relative_path」拼资源路由）
+message ResourceRef {
+  string content_type = 1;
+  uint64 size = 2;
+}
+
+// ===================== 资源 =====================
+
+message GetResourceRequest {
+  string user_xid = 1;              // 公开库匿名可读，传空串
+  string article_xid = 2;           // 当前文章（权限与归属基准）
+  string relative_path = 3;         // 规范化相对路径；禁绝对路径、禁 .. 逃逸（InvalidArgument）
+}
+// 返回 stream DownloadChunk：meta → data 分块
+
+// ===================== 上传 =====================
+
+message UploadWholeRequest {
+  string user_xid = 1;
+  string content_type = 2;
+  string original_name = 3;         // 原始文件名（仅展示）
+  bytes data = 4;                   // ≤ 2MB；超限 InvalidArgument「content too large, use chunked upload」
+  string sha256 = 5;                // 全文件 sha256（Web Crypto 预算），不符 DataLoss
+}
+message UploadWholeResponse {
+  UploadResult result = 1;
+}
+
+message InitUploadRequest {
+  string user_xid = 1;
+  string content_type = 2;
+  string original_name = 3;
+  uint64 total_size = 4;            // 全文件字节数，上限 100MB（超限 InvalidArgument）
+  string sha256 = 5;                // 全文件 sha256 声明（完整性锚点，Complete 时端到端比对）
+}
+message InitUploadResponse {
+  string upload_id = 1;             // 会话标识 upl_<xid>（pkg/eid），TTL 24h
+  uint32 part_size_limit = 2;       // 单分片上限（字节），当前 2MB
+}
+
+message UploadPartRequest {
+  string upload_id = 1;
+  uint32 part_number = 2;           // 从 1 起；同 part_number 重传幂等覆盖（可重试）
+  bytes data = 3;                   // ≤ part_size_limit；末片可小于
+  string sha256 = 4;                // 本分片 sha256，不符 InvalidArgument（只重传该片）
+}
+message UploadPartResponse {
+  uint64 received_size = 1;         // 服务端确认的该分片字节数
+}
+
+message GetUploadStatusRequest {
+  string upload_id = 1;
+}
+// GetUploadStatusResponse 断点续传：前端对比本地分片计划，只补缺失片
+message GetUploadStatusResponse {
+  uint64 total_size = 1;            // InitUpload 声明的总大小
+  repeated UploadedPart parts = 2;  // 已收分片
+}
+
+// UploadedPart 已收分片
+message UploadedPart {
+  uint32 part_number = 1;
+  uint64 size = 2;
+}
+
+message CompleteUploadRequest {
+  string upload_id = 1;
+}
+message CompleteUploadResponse {
+  UploadResult result = 1;
+}
+
+message AbortUploadRequest {
+  string upload_id = 1;
+}
+message AbortUploadResponse {}

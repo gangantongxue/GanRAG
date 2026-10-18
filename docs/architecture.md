@@ -40,7 +40,7 @@
                     └─────────────────┘
 
   对象存储（S3 协议，唯一直接访问方 = Repository）：
-  前端 → Gateway（验签/路由）→ Repository（权限 + Presigned URL）→ Garage（S3）
+  前端 → Gateway（验签/路由）→ Repository（权限 + gRPC 流式读写）→ Garage（S3，不对外暴露）
 ```
 
 ## 技术选型
@@ -177,7 +177,7 @@ Go 标准库结构化日志 + 日志文件轮转：
 
 | 设计项 | 状态 | 阶段 | 详见 |
 |--------|------|------|------|
-| **移除 File Store，直连 Garage（S3）单桶 + Presigned URL 文件访问** | 🔨 实现中（架构迁移已落地 2026-10-17：File Store 已移除、0006 已迁移、Garage 基础设施就绪；Presigned 读取与资源接口随「Repository 服务实现」落地） | P1 架构迁移 | [service/repository/docs/architecture.md](../../service/repository/docs/architecture.md)（「架构迁移（移除 File Store 直连 Garage）」） |
+| **移除 File Store，直连 Garage（S3）单桶 + gRPC 流式文件访问** | 🔨 实现中（架构迁移已落地 2026-10-17：File Store 已移除、0006 已迁移、Garage 基础设施就绪；协议已定 2026-10-18：上传/下载走 gRPC、Garage 不对外暴露，Presigned 302 降为可选部署形态；实现随「Repository 服务实现」落地） | P1 架构迁移 | [service/repository/docs/architecture.md](../../service/repository/docs/architecture.md)（「对象存储与文件访问」） |
 | Markdown 相对路径解析与 `attachments.relative_path` | 🔨 实现中（`relative_path` 已随 0006 落库 2026-10-17；解析逻辑随 Repository / 前端实现） | P1 架构迁移 | [service/repository/docs/architecture.md](../../service/repository/docs/architecture.md)、[data-model.md](data-model.md)（「架构迁移（移除 File Store 直连 Garage）」） |
 | 多智能体路由与切换（Decima-small） | 📝 设计定稿，代码未实现 | P1.5 | [service/ai/docs/architecture.md](../../service/ai/docs/architecture.md)（「多智能体路由与切换」） |
 | 上下文压缩（会话级 context + 消息游标 + 隐藏 Agent 提示词） | 📝 设计定稿，代码未实现 | P1.5 | [service/ai/docs/architecture.md](../../service/ai/docs/architecture.md)、[data-model.md](data-model.md)（「上下文压缩」） |
@@ -229,3 +229,4 @@ Go 标准库结构化日志 + 日志文件轮转：
 | 2026-10-17 | 文件访问走「Gateway 稳定路由 → Repository 权限校验 → Presigned URL 302」；Markdown 内只写相对路径，前端渲染时以当前文章为基准解析并拼 Gateway 地址 | 权限判定收敛 Repository（知识库领域边界），Gateway 不复制规则；相对路径由 Repository 再规范化校验防越权；Markdown 不存 Presigned URL（会过期）；详见 service/repository/docs/architecture.md |
 | 2026-10-17 | `attachments` 增 `relative_path`（article_id + relative_path 唯一），支撑「当前文章 + 相对路径」稳定找回对象；迁移前先 `task db-status`，已应用迁移禁改，新增 up/down 成对 | 用户自定义 Markdown 相对引用需持久化才能渲染期解析；见 docs/data-model.md「ganrag_repository」 |
 | 2026-10-17 | Garage 不启用 s3_web 网页托管展示模块（无 3902 端口）；数据卷 named volume 持久化，garage.toml 经 compose configs 注入、密钥走 .env，首启 `--single-node --default-bucket` 自动建桶与密钥 | 内容只经 S3 API 读取，桶私有无网站托管需求，省一个常驻监听模块；重启/重建容器不丢数据，秘密不入库 |
+| 2026-10-18 | 文件读写改走 gRPC、Garage 不对外暴露：下载 gRPC 流式（Gateway 回写 HTTP body），上传「整段 + 会话式分片」（断点续传 `GetUploadStatus`、三层 sha256 校验：单片收片即验 / 合并前结构校验 / 合并后读回对比声明值）；Presigned URL 302 降为可选部署形态 | 不暴露 Garage 端口换内网封闭，避免桶地址绕过 Gateway；分片断点续传 + 端到端校验保证「Garage 最终字节 == 前端原始文件」；覆盖 2026-10-17「Presigned URL 302」主路径口径；详见 service/repository/docs/architecture.md |

@@ -50,13 +50,13 @@ Hertz 是字节跳动开源的高性能 HTTP 框架，具有以下特点：
 | POST | `/api/v1/auth/refresh` | **绕过 access 校验**（user 架构文档硬性要求） | UserService.Refresh |
 | GET | `/api/v1/users/me` | Bearer access token | UserService.GetUser（id 取自 token） |
 | PUT | `/api/v1/users/me/password` | Bearer access token | UserService.UpdatePassword（user_id 取自 token） |
-| GET | `/api/v1/articles/{article_xid}/resource?path=...` | Bearer access token（公开库可匿名） | Repository 校验权限后签发 Presigned URL，Gateway 302 重定向 |
+| GET | `/api/v1/articles/{article_xid}/resource?path=...` | Bearer access token（公开库可匿名） | RepositoryService.GetResource（server-streaming），Gateway 流式回写 HTTP body |
 
 文件资源路由（架构迁移 P1，详见 [service/repository/docs/architecture.md](../../repository/docs/architecture.md)「对象存储与文件访问」）：
 
 - 浏览器首次请求稳定地址（前端由 Markdown 相对路径解析拼接），**不直接拼 Garage 地址**
 - Gateway 只做 JWT 验签、限流、路由；**知识库权限校验在 Repository**（领域边界），Gateway 不复制规则
-- Repository 返回短期 Presigned URL（60s、只读单对象），Gateway 302 `Location` 到 Garage，浏览器从 Garage 取文件
+- Repository 从 Garage 流式读出对象（gRPC server-streaming），Gateway 流式回写 HTTP body（Garage 不对外暴露，2026-10-18 定；Presigned URL 302 降为可选部署形态）
 - S3 凭证只在 Repository，Gateway 与前端均不持有
 
 gRPC 状态码 → HTTP 状态码映射：

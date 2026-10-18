@@ -145,7 +145,7 @@ task infra             # 首次启动自动创建默认 S3 密钥与私有桶（
 
 - 单私有桶 + 统一对象 key `o/<object_xid>`，Repository 为唯一直接访问方；S3 凭证只在 `.env`（不入库、不进前端、不进 Gateway）
 - 数据存 named volume（`garage-meta` / `garage-data`），容器重启、重建与 `task infra-down` 均不丢数据；仅显式 `docker compose down -v` 会清空
-- 端口：3900 S3（绑定 127.0.0.1，供 Presigned URL 浏览器可达）、3903 管理 API；3901 RPC 仅容器网络内；s3_web（3902 网页托管展示）不启用
+- 端口：3900 S3（绑定 127.0.0.1，仅 Repository 访问；dev 映射便于本地调试，浏览器默认不直连 Garage）、3903 管理 API；3901 RPC 仅容器网络内；s3_web（3902 网页托管展示）不启用
 - 设计详见 [service/repository/docs/architecture.md](service/repository/docs/architecture.md)「对象存储与文件访问」
 
 ## 开发

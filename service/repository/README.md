@@ -1,6 +1,6 @@
 # Repository 服务
 
-知识库管理服务，同时是**对象存储（Garage，S3 协议）的唯一直接访问方**：文章正文、附件对象的写入/删除、文件资源权限校验与 Presigned URL 签发都在本服务。
+知识库管理服务，同时是**对象存储（Garage，S3 协议）的唯一直接访问方**：文章正文、附件对象的读写（gRPC 流式下载、整段/分片上传）、文件资源权限校验都在本服务（Garage 不对外暴露）。
 
 架构设计见 [docs/architecture.md](docs/architecture.md)（对象存储与文件访问、Markdown 相对路径解析、权限边界）。
 

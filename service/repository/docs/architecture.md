@@ -4,7 +4,7 @@
 
 Repository 服务是知识库、目录树、文章、附件的业务边界，也是**对象存储（Garage，S3 协议）的唯一直接访问方**。前端不接触 S3 凭证，Gateway 不持有 S3 凭证，二者都通过 Repository 完成文件的权限校验与读取授权。
 
-> **落地状态**：架构迁移已落地（2026-10-17）——File Store 已移除、`attachments.relative_path` 已随迁移 0006 落库、Garage 基础设施就绪（compose 编排、自动建桶与密钥、数据卷持久化）；**Garage 读写与资源接口代码随「Repository 服务实现」落地**。跟踪见 [docs/todo.md](../../../docs/todo.md)。
+> **落地状态**：架构迁移已落地（2026-10-17）——File Store 已移除、`attachments.relative_path` 已随迁移 0006 落库、Garage 基础设施就绪（compose 编排、自动建桶与密钥、数据卷持久化）；**接口协议已定（2026-10-18，[api/proto/repository/v1/repository.proto](../../../api/proto/repository/v1/repository.proto)）**：读写均走 gRPC、Garage 不对外暴露（原 Presigned 302 主路径降为可选部署形态）；**Garage 读写与接口实现随「Repository 服务实现」落地**。跟踪见 [docs/todo.md](../../../docs/todo.md)。
 
 ## 对象存储与文件访问（P1 核心，架构迁移最高优先级）
 
@@ -22,23 +22,23 @@ Repository 服务是知识库、目录树、文章、附件的业务边界，也
 浏览器
   ↓ GET /api/v1/articles/{article_xid}/resource?path=...
 Gateway            验签 JWT、限流、转发 user_id
-  ↓ gRPC
-Repository Service 知识库权限校验、相对路径解析、生成短期 Presigned URL
-  ↓ 302 Location
-浏览器
-  ↓ GET Presigned URL
-Garage（S3）       返回对象内容
+  ↓ gRPC（server-streaming）
+Repository Service 知识库权限校验、相对路径解析、从 Garage 流式读对象
+  ↓ meta + data 分块
+Gateway            流式回写 HTTP body
+  ↓
+浏览器             收到文件内容（Garage 全程不对外暴露）
 ```
 
 | 层 | 职责 | 不做 |
 |----|------|------|
-| Gateway | HTTP 边界、JWT 验签、限流、资源路由、302 重定向、CORS 与缓存头 | 不复制知识库权限规则、不持有 S3 凭证 |
-| Repository | 知识库可见性/成员权限判定、Markdown 相对路径解析、对象归属校验、Presigned URL 签发、对象写入与删除 | 不把 S3 凭证下发给任何人 |
-| Garage | 对象持久化、S3 认证、GET/PUT/DELETE 对象 | 不理解用户、知识库、成员关系 |
+| Gateway | HTTP 边界、JWT 验签、限流、资源路由、流式回写、CORS 与缓存头 | 不复制知识库权限规则、不持有 S3 凭证 |
+| Repository | 知识库可见性/成员权限判定、Markdown 相对路径解析、对象归属校验、对象读写（gRPC 流式）、上传会话与完整性校验 | 不把 S3 凭证下发给任何人 |
+| Garage | 对象持久化、S3 认证、GET/PUT/DELETE 对象 | 不理解用户、知识库、成员关系；不对外暴露端口 |
 
 **权限判定放在 Repository 层**（知识库领域边界），Gateway 只做认证与路由。理由：知识库可见性（owner / member / visibility）规则属于领域逻辑，复制到 Gateway 会导致两处真相；未来拆出 Knowledge Base Service 时由该服务承接，Gateway 契约不变。
 
-**前端"直接访问 Garage"的准确语义**：浏览器最终从 Garage 取到文件内容（302 到 Presigned URL），但首次请求的稳定地址永远是 Gateway 路由；Markdown 中**不写**任何 Garage 地址。
+**读写均经 gRPC、Garage 不对外暴露**（2026-10-18 定）：浏览器只访问 Gateway 稳定地址，文件内容经 Gateway 流式转发（上传同理走 gRPC 分片）；Markdown 中**不写**任何 Garage 地址。Presigned URL 302 仅作可选部署形态保留（见「可选部署形态」）。
 
 ### 桶设计：单桶私有，不是匿名公共桶
 
@@ -88,7 +88,7 @@ o/<obj_xid>
 /api/v1/articles/<article_xid>/resource?path=assets/screenshot.png
 ```
 
-Repository 按「当前文章 + 规范化 relative_path」查 `attachments` 得到真正的 `file_key`，校验权限后签发 Presigned URL。
+Repository 按「当前文章 + 规范化 relative_path」查 `attachments` 得到真正的 `file_key`，校验权限后从 Garage 流式读出、经 Gateway 回写。
 
 2. **Markdown 引用其他文章** → 按知识库目录树解析目标文章，跳转文章页面或文章 API 稳定地址（`/api/v1/articles/<xid>`）。断链保留原文、渲染时标记失效。
 
@@ -98,13 +98,24 @@ Repository 按「当前文章 + 规范化 relative_path」查 `attachments` 得�
 - 禁止 `..` 逃逸出当前知识库范围
 - 无权限或不存在统一返回 404（不暴露资源是否存在，防枚举）
 
-### Presigned URL 约束
+### 可选部署形态：Presigned URL 302（默认不启用）
+
+默认形态是「Repository 读取 → Gateway 流式返回」（Garage 不对外暴露）。若部署环境放开 Garage 对外端口、需要直连吞吐，可启用 Presigned URL 形态（协议后续追加向后兼容），约束如下：
 
 - 有效期 60 秒（初始值，可配置）
 - 只允许 GET 指定对象，不允许列举桶、不允许写
 - S3 Access Key 永不下发前端
 - Markdown 中只存 Gateway 稳定地址或相对路径，不存 Presigned URL（会过期）
-- 部署环境若不放开 Garage 对外端口，可降级为「Repository 读取 → Gateway 流式返回」，牺牲吞吐换取不出内网
+
+### 上传协议（gRPC 整段 + 会话式分片，断点续传 + 三层完整性校验）
+
+写路径同样不出内网（2026-10-18 定，见 `api/proto/repository/v1/repository.proto`）：
+
+- **整段** `UploadWhole`：≤2MB 小文件一次传；超限 `InvalidArgument`「content too large, use chunked upload」，前端自动降级分片
+- **会话式分片**：`InitUpload`（声明 `total_size` 与全文件 sha256）→ `UploadPart`（同 `part_number` 幂等覆盖，可重试）→ `CompleteUpload`；中断用 `GetUploadStatus` 查已收分片补传（**断点续传**）；`AbortUpload` 取消
+- **三层完整性校验**：① 单片 sha256 收片即验，坏片只重传该片 ② 合并前结构校验（分片 1..N 连续、Σ大小 == `total_size`）③ 合并后从 Garage 读回对象计算 sha256 与 `InitUpload` 声明值比对——端到端保证「Garage 最终字节 == 前端原始文件」，不符 `DataLoss` 作废重传；校验值落 `attachments.sha256`
+- 上限（可配）：整段 2MB、单分片 2MB、总大小 100MB、会话 TTL 24h（过期自动清理分片）；前端 sha256 用 Web Crypto（`crypto.subtle.digest`）原生计算
+- 上传得到通用 `object_xid`，文章正文（`content_key`）与附件（`file_key`）以引用挂接；上传未引用对象属可容忍孤儿（同保存文章口径），后续清理任务处理
 
 ### 数据库变化：`attachments` 增 `relative_path`
 
@@ -142,7 +153,7 @@ UNIQUE KEY uk_attachments_article_path (article_id, relative_path)
 | `objectstore.access_key_id` | 环境变量注入 | 不入库、不进前端 |
 | `objectstore.secret_access_key` | 环境变量注入 | 不入库、不进前端 |
 | `objectstore.force_path_style` | `true` | Garage 需 Path Style |
-| `objectstore.presign_ttl` | `60s` | Presigned URL 有效期 |
+| `objectstore.presign_ttl` | `60s` | Presigned URL 有效期（可选 Presigned 形态用） |
 
 S3 调用统一带 context 超时；写入、删除、Head、List 均有限制；错误映射统一走 `pkg/errcode`（S3 NoSuchKey → NotFound 等）。
 
@@ -152,7 +163,7 @@ S3 调用统一带 context 超时；写入、删除、Head、List 均有限制�
 
 | 端口 | 用途 |
 |------|------|
-| 3900 | S3 API（Repository 访问；dev 映射 127.0.0.1 供 Presigned URL 浏览器可达，生产可不映射、走「Gateway 流式返回」降级） |
+| 3900 | S3 API（Repository 访问；dev 映射 127.0.0.1 便于本地调试，浏览器默认不直连 Garage——读写均经 gRPC 流式） |
 | 3901 | RPC（仅容器网络内） |
 | 3903 | Admin API（绑定 127.0.0.1，运维用） |
 
@@ -176,5 +187,6 @@ S3 调用统一带 context 超时；写入、删除、Head、List 均有限制�
 按 [docs/todo.md](../../../docs/todo.md) 优先级顺序：
 
 - 「架构迁移（移除 File Store 直连 Garage）」（✅已完成 2026-10-17）
+- 「Repository 服务协议（proto）定义」（✅已完成 2026-10-18，[api/proto/repository/v1/repository.proto](../../../api/proto/repository/v1/repository.proto)）
 - 「Repository 服务实现」
 - 「Repository 服务架构文档补齐」（✅已完成，本文件即补齐内容）
