@@ -27,6 +27,8 @@ Eino 是字节跳动的 AI 应用开发框架，用于构建基于大语言模�
 1. 多智能体路由与切换；
 2. 向量召回与关键词召回合并后的候选相关性审查。
 
+社交关系感知的召回重排由 [social-graph 服务](../../social-graph/docs/architecture.md) 提供社交信号，Decima 不承担社交打分；见本文「多路召回与聚合审查（P3）」。
+
 ### 决策模型：Decima-small
 
 **选型：Decima-small**（开源、Apache-2.0、Jev/System One 兼容的本地决策模型）。它输出 `choice`、`score`、`noul` 等结构化结果及概率，不生成自然语言回答。
@@ -150,56 +152,168 @@ else:
 
 AI 服务持有**当前向量化模型**配置（稳定 id + 版本，如 `bge-m3`），职责：
 
-- **写入**：文章保存/删除的增量同步后，对 `articles.content` 分块、用当前模型向量化，写入 `kb-<kb_xid>-<model_id>` 集合（每条向量 metadata 记 `embedding_model`）
+- **写入**：文章保存/删除的增量同步后，按 `articles.content_key` 读取 Garage 中的 md 分块、用当前模型向量化，写入 `kb-<kb_xid>-<model_id>` 集合（每条向量 metadata 记 `embedding_model`）
 - **检索路由**：查询向量用当前模型编码，**只查当前模型后缀的集合**——用什么模型，就检索对应的向量化结果，切换模型不影响旧向量的可用性
-- **切换模型**：新写入切新模型集合 → 按 content 全量重建（不重跑 markitdown）→ 重建完成前旧集合继续服务 → 原子切换配置、下线旧集合（保留期可回滚）
+- **切换模型**：新写入切新模型集合 → 按 `content_key` 全量重建（不重跑 markitdown）→ 重建完成前旧集合继续服务 → 原子切换配置、下线旧集合（保留期可回滚）
 
 ## 多路召回与聚合审查（P3）
 
 > **落地状态：设计定稿，代码未实现**（P3）——实现后更新根 `docs/architecture.md`「设计落地状态」。
+>
+> 召回总纲、关系建模与公开数据集标定方法见 [docs/social-recall.md](../../../docs/social-recall.md)；社交图服务见 [service/social-graph/docs/architecture.md](../../social-graph/docs/architecture.md)。
+>
+> 本节只定义 AI 服务的消费方式。所有融合权重均为配置项，文档只给序关系与来源，不固化数值。
 
 ### 处理顺序
 
 ```text
-权限硬过滤 → 向量召回 + 关键词召回 → 合并去重 → 基础排序
-→ Decima-small 相关性审查 → 最终排序
+权限硬过滤
+→ 向量召回 + 关键词召回
+→ 合并去重 → 排名归一化或 RRF
+→ 时效乘性衰减
+→ star / 社交加性融合
+→ 取 Top-K → Decima-small 相关性审查
+→ 最终排序
 ```
 
-权限过滤必须先于两条召回链路：私有库排除非成员，协作库只允许协作者，公开库允许所有人。未授权文档不得进入候选集，也不得发送给 Decima-small。
+权限过滤必须先于两条召回链路：私有库排除非成员，公开库允许所有人。未授权文档不得进入候选集，也不得发送给 Decima-small。
 
-向量链路和关键词链路分别取候选，例如 `Nv = 100`、`Nk = 100`，按文档块 ID 合并去重。两条链路的原始分数不直接相加，统一使用排名归一化：
+### 双路召回与基础融合
+
+向量链路和关键词链路分别取 `Top-Nv` / `Top-Nk`，按文档块 ID 合并去重。两条链路的原始分数不直接相加，统一使用排名归一化或 RRF：
 
 ```text
 V(d) = (Nv - vector_rank(d) + 1) / Nv
 K(d) = (Nk - keyword_rank(d) + 1) / Nk
+A(d) = 双路命中标记（命中为 1，否则 0）
+
+线性融合：R(d) = w_v × V(d) + w_k × K(d) + w_both × A(d)
+RRF：     R(d) = Σ 1 / (k + rank_i(d))
 ```
 
-未被某条链路命中的文档，该链路得分为 `0`。双路命中信号为 `A(d)`（双路命中为 1，否则为 0），召回基础分为：
+- 未被某条链路命中的文档，该链路得分为 `0`；
+- `w_v` / `w_k` / `w_both` / `k` 均为配置或待标定超参；
+- 社交分分布不均时优先用 RRF 兜底，避免量纲主导。
+
+### 时效衰减（乘性）
+
+时效是**乘性**项：过时文章语义再相关也应被压降，而不是被高语义分抵消。
 
 ```text
-R(d) = 0.55 × V(d) + 0.30 × K(d) + 0.15 × A(d)
+ageDays   = now - freshnessAt(article)
+timeDecay = max(pow(0.5, ageDays / halfLife), decayFloor)
+B(d)      = R(d) × timeDecay(d)
 ```
 
-关系、时间和热度只用于召回后的排序，不得影响权限判断：
+- `freshnessAt` 优先取 `articles.updated_at`（最后修改），回退 `created_at`（发布）；
+- `halfLife` 是待标定超参；`decayFloor` 是结构性常数，防止经典老文章被完全压死；
+- 当前没有内容级更新时间字段；如后续需要区分「正文更新」与「元数据编辑」，再补 `content_updated_at`，不在本阶段扩展。
+
+### star 热度（加性）
+
+项目 star 是**知识库级**：文章热度取所属知识库 `star_count`，不做文章级 star。
 
 ```text
-S_base(d | u, q) =
-    0.55 × R(d)
-  + 0.25 × rel(u, d)
-  + 0.12 × time(u, d)
-  + 0.08 × heat(d)
+starCount = kb.star_count
+if 当前用户 star 过该 kb: starCount--        // 结构性处理，避免重复奖励
+starScore = min(log1p(starCount) / log1p(p95StarCount), 1)
 ```
 
-其中：
+- `p95StarCount` 由离线统计知识库 star 分布得到，是统计参数，不是权重；需随数据定期刷新；
+- `log1p` 压缩与 P95 封顶是结构性处理；
+- 所有 star 数都为 0 时 `starScore` 取 0。
 
-- `rel`：`OWN=1.0`、`MEMBER=0.8`、`STARRED=0.6`、`FOLLOWED_AUTHOR=0.4`、`OTHER=0.1`；多个关系同时存在时取最大值；
-- `time = exp(-λ × Δdays)`；当前没有用户访问时间字段时，使用文章、知识库、star 或 follow 的最近有效时间；
-- `heat = log(1 + star_count) / log(1 + max_star_count)`；所有 star 数都为 0 时取 0，使用对数平滑防止热门知识库无限霸榜。
+### 社交分数（加性）
 
-对基础排序前 `K` 个候选（初始建议 `K=20`）调用 Decima-small 的 `noul` 问题，判断“该文档是否直接有助于回答当前用户问题”，得到 `audit(d) ∈ [0,1]`。最终分数为：
+社交分由 social-graph 服务提供原始信号，AI 服务负责映射与融合。对候选集调用 `BatchGetArticleSocialSignals`，只传已授权候选；响应带 `tier`、结构信号与 `profile_version`。
 
 ```text
-S_final(d) = 0.85 × S_base(d) + 0.15 × audit(d)
+tier        = socialGraph.tier   // 已按 KB/作者关系取最高档
+socialScore = clamp(
+    tierScore(tier)
+  + pagerankBonus
+  + communityBonus
+  + jaccardBonus,
+  0, 1
+)
 ```
 
-Decima-small 只能提供相关性信号，不能绕过权限、替代两条召回链路或单独决定最终结果。每个候选保留 `vector_rank`、`keyword_rank`、各信号分数和 `final_score`，支持解释排名、网格调参与消融实验（去掉关键词、关系、时间、热度或 Decima 审查分别评估 Recall@K、MRR、nDCG@K）。
+`tier` 由 social-graph 服务返回：`max(kbTier(kb, kb_owner), authorTier(author))`，覆盖 `own_kb` / `collaborator` / `starred_kb` / `follow(owner)` / `self_authored` / `mutual_follow` / `follow` / `starred_author` 等关系。
+
+关系优先级只给序关系：
+
+```text
+self_authored / own_kb
+  > mutual_follow
+  > follow
+  > collaborator
+  > starred_kb
+  > two_hop
+  > same_community / jaccard
+  > starred_author
+  > public
+```
+
+- 多信号命中时直接关系**取最高档**，不把档位分值相加；结构派生信号作为加成项；
+- `same_community` / `jaccard` 已经是档位时不再重复加对应 bonus；更高档位是否叠加由实验决定；
+- `starred_kb` 表示我 star 了该 KB（即关注该库）；`starred_author` 表示我 star 过该作者拥有的其他 KB，是弱作者聚合信号；
+- `FOLLOWED_AUTHOR` 只由 `user_follows` 表达，不由 star 推导；
+- PageRank、Leiden、Jaccard、二跳的系数均为待标定超参；Node2Vec 是并列对比项，不与图分数简单叠加；
+- 社交图服务不可用或 profile 未命中时，`socialScore` 置 0 或回退旧五档规则（配置），不得绕过权限。
+
+### Decima-small 相关性审查
+
+对融合排序后的 Top-K 候选调用 Decima-small 的 `noul` 问题，判断「该文档是否直接有助于回答当前用户问题」，得到 `audit(d) ∈ [0,1]`：
+
+```text
+S_pre(d)   = B(d) + w_star × starScore(kb(d)) + w_social × socialScore(u, d)
+S_final(d) = S_pre(d) + w_audit × audit(d)
+```
+
+- Decima-small 只提供相关性信号，不能绕过权限、替代两条召回链路或单独决定最终结果；
+- `w_audit` 是独立配置项，与社交/star 权重分开标定；
+- Top-K 的 `K` 是工程配置，不是权重。
+
+### 候选元数据契约
+
+AI 服务在向量写入/检索时需要拿到以下字段（不可变字段可随向量 metadata 写入，动态字段查询时从 Repository 或缓存取）：
+
+| 字段 | 来源 | 用途 |
+|---|---|---|
+| `article_xid` / `kb_xid` | 向量 metadata | 候选标识、权限过滤 |
+| `author_xid` | `articles.created_by_xid` | 作者关系、社交分 |
+| `kb_owner_xid` | `knowledge_bases.owner_xid` | 库主关系、社交分 |
+| `created_at` / `updated_at` | `articles` | 时效衰减 |
+| `kb_star_count` | `knowledge_bases.star_count` | star 热度（动态，查询时取最新值） |
+
+### 配置项（AI 服务持有）
+
+| 配置 | 说明 | 来源 |
+|---|---|---|
+| `w_v` / `w_k` / `w_both` 或 `alpha` | 语义、关键词、双路命中的融合比例 | T2Ranking / DuReader_retrieval |
+| `w_star` | star 热度融合权重 | 第一层联合校准 |
+| `w_social` | 社交分数融合权重 | 第一层联合校准 |
+| `w_audit` | Decima 审查分权重 | Top-K 复核实验 |
+| `time_half_life` | 时效半衰期 | ChronoQA |
+| `time_decay_floor` | 衰减下限（结构性常数） | 不参与调优 |
+| `star_p95` | 知识库 star P95（统计参数） | 数据分布统计，定期刷新 |
+| 关系档位分值 | 各档位的相对分值 | Dianping/Douban + 合成变体 |
+| `pagerank_bonus` / `community_bonus` / `jaccard_bonus` | 结构加成系数 | 第二层消融 |
+| `social_fallback_mode` | `zero` 或 `legacy_tier` | 工程配置 |
+| `top_nv` / `top_nk` / `top_k_audit` | 候选规模 | 工程配置 |
+
+### 可解释与消融
+
+每个候选保留 `vector_rank`、`keyword_rank`、`V`、`K`、`timeDecay`、`starScore`、`socialScore` 的各分项、`audit`、`final_score`，支持：
+
+- 解释排名：为什么这篇排前面；
+- 网格调参/贝叶斯优化；
+- 消融实验：去掉关键词、社交、时间、star 或 Decima 审查，分别评估 Recall@K、MRR、nDCG@K；
+- 分社交密度报告稳定性，避免只在一个模拟分布上取最优。
+
+### 边界
+
+- 社交信号只作用于**已授权候选**；
+- star/社交/时效只做排序，不影响权限；
+- Decima 不直接决定数据库写入、工具调用等副作用操作；
+- 公开数据集调出的权重只是上线初值，最终以真实日志/A/B 测试微调。

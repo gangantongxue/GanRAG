@@ -9,6 +9,7 @@ RAG（检索增强生成）是实现「基于用户自己的知识回答问题�
 - 产品形态与功能分期：[docs/product.md](docs/product.md)
 - 数据模型（全部业务表）：[docs/data-model.md](docs/data-model.md)
 - 总体架构与技术选型：[docs/architecture.md](docs/architecture.md)
+- 社交关系感知召回与权重标定：[docs/social-recall.md](docs/social-recall.md)
 
 ## 目录结构
 
@@ -20,12 +21,13 @@ RAG（检索增强生成）是实现「基于用户自己的知识回答问题�
 │   ├── asynctask/        # 公共 async_tasks（ganrag_common）共享存储
 │   └── db/               # 数据库基础设施：SQL 迁移、同步任务、gorm gen 生成的 model/query
 ├── scripts/              # 跨服务公共脚本（Proto 生成、MySQL 初始化授权）
-├── service/              # 各微服务（每个服务含 Taskfile、Dockerfile、独立 scripts/）
+├── service/              # 各微服务（已实现服务含 Taskfile、Dockerfile、独立 scripts/；social-graph 当前仅设计文档）
 │   ├── gateway/          # API 网关（Hertz）
 │   ├── ai/               # AI / RAG 服务（Eino）
 │   ├── user/             # 用户服务
 │   ├── repository/       # 知识库服务
 │   ├── vector-store/     # 向量存储服务（chromem-go + gRPC）
+│   ├── social-graph/     # 社交图服务（P3，gograph；当前仅设计文档）
 │   └── (对象存储 = Garage S3，外部基础设施，不在 service/ 下)
 ├── docker-compose.yml    # 基础设施编排（MySQL、Redis、Garage，task infra 启动）
 ├── Taskfile.yml          # 根 Taskfile：统一编排
@@ -61,7 +63,7 @@ RAG（检索增强生成）是实现「基于用户自己的知识回答问题�
 | `task stop` | 停止并删除所有服务容器 |
 | `task --list` | 查看全部任务 |
 
-服务名即 `service/` 下的目录名（gateway、ai、user、repository、vector-store）；对象存储使用 Garage（S3 协议），由 Repository 服务直接访问。
+服务名即 `service/` 下的目录名（gateway、ai、user、repository、vector-store；P3 增加 social-graph）；对象存储使用 Garage（S3 协议），由 Repository 服务直接访问。
 
 ### 服务目录命令（以 vector-store 为例）
 

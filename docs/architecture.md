@@ -6,6 +6,7 @@
 
 - 产品形态、权限模型与分期路线：[docs/product.md](product.md)
 - 数据模型与表结构：[docs/data-model.md](data-model.md)
+- 社交关系感知召回与权重标定：[docs/social-recall.md](social-recall.md)
 
 ## 服务架构
 
@@ -41,6 +42,12 @@
 
   对象存储（S3 协议，唯一直接访问方 = Repository）：
   前端 → Gateway（验签/路由）→ Repository（权限 + gRPC 流式读写）→ Garage（S3，不对外暴露）
+
+  社交图（P3，内部 gRPC）：
+  AI Service ──查询社交信号──▶ Social Graph Service
+                                  │ 内部分页导出（不跨库）
+                                  ├──▶ User Service（关注关系）
+                                  └──▶ Repository Service（KB 成员/star/归属）
 ```
 
 ## 技术选型
@@ -156,18 +163,20 @@ Go 标准库结构化日志 + 日志文件轮转：
 | 配置(YAML) | Viper | 结构化配置 |
 | 配置(.env) | GoDotEnv | 环境变量 |
 | 向量存储 | chromem-go | 纯 Go 内嵌向量库，详见 service/vector-store/docs/ |
-| 对象存储 | Garage（S3 协议） | 通用 S3，直连可迁移 MinIO/AWS S3/R2；Repository 是唯一直接访问方，详见 [service/repository/docs/architecture.md](../../service/repository/docs/architecture.md)「对象存储与文件访问」 |
+| 图计算 | gograph | PageRank / Leiden / BFS / Dijkstra；独立 `social-graph` 服务使用，pre-1.0 需 adapter 隔离，详见 [service/social-graph/docs/architecture.md](../service/social-graph/docs/architecture.md) |
+| 对象存储 | Garage（S3 协议） | 通用 S3，直连可迁移 MinIO/AWS S3/R2；Repository 是唯一直接访问方，详见 [service/repository/docs/architecture.md](../service/repository/docs/architecture.md)「对象存储与文件访问」 |
 | 文档转换 | markitdown (Python CLI) | PDF / Word / HTML → md，上传时转换，详见 docs/product.md |
 
 ## 各服务架构详情
 
 | 服务 | 架构文档 |
 |------|----------|
-| Gateway | [service/gateway/docs/architecture.md](../../service/gateway/docs/architecture.md) |
-| AI Service | [service/ai/docs/architecture.md](../../service/ai/docs/architecture.md) |
-| User Service | [service/user/docs/architecture.md](../../service/user/docs/architecture.md) |
-| Repository Service | [service/repository/docs/architecture.md](../../service/repository/docs/architecture.md) |
-| Vector Store | [service/vector-store/docs/architecture.md](../../service/vector-store/docs/architecture.md) |
+| Gateway | [service/gateway/docs/architecture.md](../service/gateway/docs/architecture.md) |
+| AI Service | [service/ai/docs/architecture.md](../service/ai/docs/architecture.md) |
+| User Service | [service/user/docs/architecture.md](../service/user/docs/architecture.md) |
+| Repository Service | [service/repository/docs/architecture.md](../service/repository/docs/architecture.md) |
+| Vector Store | [service/vector-store/docs/architecture.md](../service/vector-store/docs/architecture.md) |
+| Social Graph | [service/social-graph/docs/architecture.md](../service/social-graph/docs/architecture.md)（P3） |
 
 ## 设计落地状态
 
@@ -177,14 +186,16 @@ Go 标准库结构化日志 + 日志文件轮转：
 
 | 设计项 | 状态 | 阶段 | 详见 |
 |--------|------|------|------|
-| **移除 File Store，直连 Garage（S3）单桶 + gRPC 流式文件访问** | 🔨 实现中（架构迁移已落地 2026-10-17；Repository 阶段一已实现 2026-10-18：知识库 CRUD + `UploadWhole` + async_tasks outbox；目录/文章/资源/分片上传见 todo） | P1 架构迁移 | [service/repository/docs/architecture.md](../../service/repository/docs/architecture.md)（「对象存储与文件访问」） |
-| Markdown 相对路径解析与 `attachments.relative_path` | 🔨 实现中（`relative_path` 已随 0006 落库 2026-10-17；解析逻辑随 Repository 阶段二 / 前端实现） | P1 架构迁移 | [service/repository/docs/architecture.md](../../service/repository/docs/architecture.md)、[data-model.md](data-model.md)（「架构迁移（移除 File Store 直连 Garage）」） |
-| 公共 async_tasks 失败任务表与 `pkg/asynctask` | ✅ 已实现（2026-10-18：`ganrag_common.async_tasks` + 同事务 outbox；worker/后台接口待做） | P1 | [database.md](database.md)（「ganrag_common」）、[pkg/asynctask/README.md](../../pkg/asynctask/README.md) |
-| 多智能体路由与切换（Decima-small） | 📝 设计定稿，代码未实现 | P1.5 | [service/ai/docs/architecture.md](../../service/ai/docs/architecture.md)（「多智能体路由与切换」） |
-| 上下文压缩（会话级 context + 消息游标 + 隐藏 Agent 提示词） | 📝 设计定稿，代码未实现 | P1.5 | [service/ai/docs/architecture.md](../../service/ai/docs/architecture.md)、[data-model.md](data-model.md)（「上下文压缩」） |
-| 多路召回聚合与 Decima-small 相关性审查 | 📝 设计定稿，代码未实现 | P3 | [service/ai/docs/architecture.md](../../service/ai/docs/architecture.md)（「多路召回聚合与检索权重接入」） |
+| **移除 File Store，直连 Garage（S3）单桶 + gRPC 流式文件访问** | 🔨 实现中（架构迁移已落地 2026-10-17；Repository 阶段一已实现 2026-10-18：知识库 CRUD + `UploadWhole` + async_tasks outbox；目录/文章/资源/分片上传见 todo） | P1 架构迁移 | [service/repository/docs/architecture.md](../service/repository/docs/architecture.md)（「对象存储与文件访问」） |
+| Markdown 相对路径解析与 `attachments.relative_path` | 🔨 实现中（`relative_path` 已随 0006 落库 2026-10-17；解析逻辑随 Repository 阶段二 / 前端实现） | P1 架构迁移 | [service/repository/docs/architecture.md](../service/repository/docs/architecture.md)、[data-model.md](data-model.md)（「架构迁移（移除 File Store 直连 Garage）」） |
+| 公共 async_tasks 失败任务表与 `pkg/asynctask` | ✅ 已实现（2026-10-18：`ganrag_common.async_tasks` + 同事务 outbox；worker/后台接口待做） | P1 | [database.md](database.md)（「ganrag_common」）、[pkg/asynctask/README.md](../pkg/asynctask/README.md) |
+| 多智能体路由与切换（Decima-small） | 📝 设计定稿，代码未实现 | P1.5 | [service/ai/docs/architecture.md](../service/ai/docs/architecture.md)（「多智能体路由与切换」） |
+| 上下文压缩（会话级 context + 消息游标 + 隐藏 Agent 提示词） | 📝 设计定稿，代码未实现 | P1.5 | [service/ai/docs/architecture.md](../service/ai/docs/architecture.md)、[data-model.md](data-model.md)（「上下文压缩」） |
+| 多路召回聚合、社交召回与 Decima-small 审查 | 📝 设计定稿，代码未实现 | P3 | [social-recall.md](social-recall.md)、[service/ai/docs/architecture.md](../service/ai/docs/architecture.md)（「多路召回与聚合审查」） |
+| 独立社交图服务（gograph / 互关 / 二跳 / PageRank / Leiden / Jaccard） | 📝 设计定稿，代码未实现 | P3 | [service/social-graph/docs/architecture.md](../service/social-graph/docs/architecture.md) |
+| 社交召回权重标定与公开数据集评测（T2Ranking / Dianping / Douban / ChronoQA） | 📝 设计定稿，实验未开始 | P3 | [social-recall.md](social-recall.md) |
 | 文档上传（pdf / docx / html → markitdown） | 📝 设计定稿，代码未实现 | P1.5 | 本文「文档转换」、[product.md](product.md)（「文档上传」） |
-| 向量化按模型存储与检索路由 | 📝 设计定稿，代码未实现 | P1.5 | [service/vector-store/docs/architecture.md](../../service/vector-store/docs/architecture.md)（「向量化按模型存储与检索路由」） |
+| 向量化按模型存储与检索路由 | 📝 设计定稿，代码未实现 | P1.5 | [service/vector-store/docs/architecture.md](../service/vector-store/docs/architecture.md)（「向量化按模型存储与检索路由」） |
 | chat_sessions.agent / context / context_msg_id 字段 | 🗄 表结构已落地（ai 0001-0005，含 user_xid/kb_xid/context_msg_xid） | P1 | [data-model.md](data-model.md)（「AI 服务实现」） |
 
 ## 决策记录
@@ -215,9 +226,9 @@ Go 标准库结构化日志 + 日志文件轮转：
 | 2026-10-16 | AI 服务智能体路由与召回审查选型 Decima-small（Apache-2.0，本地 pip 部署） | 结构化输出 choice / noul 及概率；路由和候选审查均由 Go 通过 HTTP 调用 `python -m decima.serve`，不在 Go 内嵌模型运行时；详见 service/ai/docs/architecture.md |
 | 2026-10-16 | Agent 切换采用「当前概率阈值 + 全体 Agent 重新选择」 | 当前 Agent 概率达到阈值则保持；低于阈值才取全体最高概率者，最高者仍为当前 Agent 时不切换，避免仅因 top 结果抖动而切换 |
 | 2026-10-16 | OpenAI 提示词采用固定通用 System + User 类型隐藏 Agent 提示词 | Agent 提示词用特殊标签注入；切换时追加到上下文末尾；压缩时只保留最新段并移到摘要前；`agent-system` 不进入用户展示和上下文搜索 |
-| 2026-10-16 | 多路召回采用权限前置、向量/关键词合并、关系/时间/热度重排和 Decima-small 审查 | 权限不可被排序信号覆盖；保留各信号支持解释、调参和消融，避免静态拍脑袋排序 |
+| 2026-10-16 | 多路召回采用权限前置、向量/关键词合并、关系/时间/热度重排和 Decima-small 审查 | 权限不可被排序信号覆盖；保留各信号支持解释、调参和消融，避免静态拍脑袋排序；2026-10-20 升级为社交分数 + star + 时效，见 [social-recall.md](social-recall.md) |
 | 2026-10-15 | 多智能体能力列为 P1.5 独立阶段，表字段 P1 一次设计到位 | P1 先单智能体闭环；chat_sessions.agent / chat_messages.agent 随 P1 建表落地，避免破坏性迁移；详见 docs/data-model.md |
-| 2026-10-15 | 文章支持 pdf / docx / html 上传：markitdown 转 md 存入 articles.content，原文附件留档，内容只读 | 向量化 / 溯源引用 / 前端渲染统一走 content 口径，重建索引免重跑转换、不受版本漂移影响；不做 OCR（内嵌图片文字不进检索，前端明示）；详见 docs/product.md |
+| 2026-10-15 | 文章支持 pdf / docx / html 上传：markitdown 转 md 存入 articles.content，原文附件留档，内容只读 | 向量化 / 溯源引用 / 前端渲染统一走 content 口径，重建索引免重跑转换、不受版本漂移影响；不做 OCR（内嵌图片文字不进检索，前端明示）；详见 docs/product.md；内容存储后续改为 Garage `content_key`，见同日 repository 数据库重设计 |
 | 2026-10-15 | 模型上下文采用「会话级 context + 消息游标」替换式压缩，不落消息表 | 消息表保持纯对话，模型上下文结构性不进用户页面；多次压缩直接替换无堆积；原文不删、search_context 仍可溯；详见 docs/data-model.md |
 | 2026-10-15 | 向量化结果按「知识库 × 向量化模型」分集合存储（`kb-<kb_id>-<model_id>`），检索按模型路由 | 不同模型维度不同、同集合维度必须一致，只能分集合；切换模型全量重建新集合、旧集合保留期可回滚；详见 service/vector-store/docs/architecture.md |
 | 2026-10-15 | 文档新增「设计落地状态」聚合表 + 各设计章节就近状态标注 | 已定稿未实现的设计集中登记，防止文档与代码状态脱节；实现时必须同步更新 |
@@ -233,3 +244,8 @@ Go 标准库结构化日志 + 日志文件轮转：
 | 2026-10-18 | 文件读写改走 gRPC、Garage 不对外暴露：下载 gRPC 流式（Gateway 回写 HTTP body），上传「整段 + 会话式分片」（断点续传 `GetUploadStatus`、三层 sha256 校验：单片收片即验 / 合并前结构校验 / 合并后读回对比声明值）；Presigned URL 302 降为可选部署形态 | 不暴露 Garage 端口换内网封闭，避免桶地址绕过 Gateway；分片断点续传 + 端到端校验保证「Garage 最终字节 == 前端原始文件」；覆盖 2026-10-17「Presigned URL 302」主路径口径；详见 service/repository/docs/architecture.md |
 | 2026-10-18 | **逻辑引用统一带 xid**：同服务引用保留自增 ID + 冗余 `*_xid`，跨服务引用只存目标 xid，对象引用保留 key + `object_xid`；迁移 user 0005 / repository 0008 / ai 0005 | 下游服务拿不到跨服务自增 ID，且「自增 ID 不出服务」；同服务保留数值键不影响现有索引与事务；当前全表为空，一次对齐避免后续返工；见根 AGENTS.md「数据库设计规范」 |
 | 2026-10-18 | **公共失败任务表 `ganrag_common.async_tasks`** + 共享包 `pkg/asynctask`（非独立服务）：`task_type`/`payload` 通用，业务事务内用全限定表名写 outbox，成功 Resolve、失败 Fail | Garage 删除失败可集中重试/后台展示；同事务写入不丢事件；其他服务直接 import，不为单一功能新增服务边界；见 [database.md](database.md)「ganrag_common」 |
+| 2026-10-20 | **社交召回独立 `social-graph` 服务**（目录 `service/social-graph/`，规划端口 50056，内部 gRPC，无自有数据库）；图由 User/Repository 现有表派生，服务只产出关系档位/结构信号 | 图需常驻内存，与 AI/Repository 的资源画像和扩缩容解耦；不跨库直连；AI 负责权限与最终融合；详见 [service/social-graph/docs/architecture.md](../service/social-graph/docs/architecture.md) |
+| 2026-10-20 | 图计算选型 **gograph**（module `github.com/FlavioCFOliveira/GoGraph`，MIT），覆盖 PageRank/Leiden/BFS/Dijkstra/CSR；pre-1.0，必须 pin 版本 + adapter 隔离，保留 gonum/自研退路 | 功能密度合适、官方有社交网络示例；生态较小，不能把生产稳定性完全押在库上 |
+| 2026-10-20 | **社交召回权重纪律**：文档只给序关系，不写具体数值；融合权重、档位分差、半衰期、加成系数、RRF `k` 为待标定超参，由公开数据集实验确定；P95 封顶、衰减下限、`log1p`、排除自身 star、`1/(1+distance)` 为结构性常数 | 防止拍脑袋权重与文档固化；保证可解释、可复现、可消融；数值来源可追溯；见 [social-recall.md](social-recall.md) |
+| 2026-10-20 | 召回结构：**时效乘性、star/社交加性**；star 为知识库级（文章继承），**关注知识库 = star 该库**，不建 follow-kb 表；互关用双向 follow 检测，二跳用 BFS 派生不存边 | 过时文章语义再相关也应降权；star/社交可互相补偿；避免新增表和边爆炸；详见 [social-recall.md](social-recall.md) |
+| 2026-10-20 | 公开数据集路线：T2Ranking 定语义基线，Dianping/Douban（DISGCN 论文数据）校准一阶社交/star，ChronoQA 单独校时效；二跳/PageRank/Leiden/Jaccard 用 T2Ranking 合成社交层 + 消融定安全区间；DuReader/ZhihuRec 补充，R3-Skill/AgentSelect 后置 | 公开数据没有「社交 + 知识库文章 + 相关性」三元组；一阶可监督校准，复杂图特征只能看边际贡献与敏感区间；避免把模拟分布当真实标注 |

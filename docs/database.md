@@ -130,6 +130,10 @@ CREATE TABLE user_follows (
 | PRIMARY | (follower_id, followee_id) | 关注唯一，兼「我关注了谁」 |
 | idx_user_follows_followee | (followee_id) | 「谁关注了我」 |
 
+- 本表只表达**用户→用户**关注；关注知识库走 `kb_user_relations.starred`，不写本表。
+- 互关 = 同一对用户存在双向行，计算时检测，不单独存边；二跳关注由 BFS 离线派生，不落表。
+- 社交图服务以本表作为关注边来源，见 [social-recall.md](social-recall.md)。
+
 ## 邮箱验证码（Redis，不建表）
 
 | 约定 | 内容 |
@@ -185,6 +189,9 @@ CREATE TABLE knowledge_bases (
 | uk_kb_owner_name | (owner_xid, name) | 同 owner 库名唯一 |
 | idx_kb_visibility_updated | (visibility, updated_at) | 发现页/搜索排序 |
 | idx_kb_owner | (owner_xid) | 「我的库」 |
+
+- `star_count` 是**知识库级**热度；文章热度继承所属知识库，不建文章级 star 表。
+- 社交召回中 star 热度按知识库 star 数做分位数归一化（P95 为统计参数，定期刷新），见 [social-recall.md](social-recall.md)。
 
 ## directories 目录树
 
@@ -263,7 +270,10 @@ CREATE TABLE articles (
 | content_key | VARCHAR(500) | 正文 md 对象 key（统一 `o/<obj_xid>`） |
 | content_object_xid | VARCHAR(32) | 正文对象 obj_<xid>（对象引用，不解析 key） |
 | created_by_xid | VARCHAR(32) | 创建者 usr_<xid> 全串（跨服务逻辑引用） |
-| created_at / updated_at | DATETIME | 自动维护 |
+| created_at / updated_at | DATETIME | 自动维护；`created_at` 视为发布时间，`updated_at` 作为最后修改/新鲜度 |
+
+- 无 `published_at` 字段：时效衰减优先用 `updated_at`，回退 `created_at`；如后续需要区分正文更新与元数据编辑，再加 `content_updated_at`。
+- `created_by_xid` 是文章作者信号；KB 成员关系中的协作者由 `kb_user_relations.role >= 1` 表达。
 
 | 索引 | 列 | 用途 |
 |------|----|------|
@@ -372,6 +382,10 @@ CREATE TABLE kb_user_relations (
 | idx_kb_user_relations_user_xid | (user_xid) | 「我是成员的库」「我 star 的库」 |
 
 规则：star/取消 star 与 `knowledge_bases.star_count` 增减同一事务；关系状态（own / member / star，加 ganrag_user 的 follow）构成检索权重信号。
+
+- `starred = 1` 即**关注该知识库**；不另建 follow-kb 表，关注用户仍由 `user_follows` 表达。
+- `role >= 1` 即 KB 成员，社交召回中作为「协作者」信号；文章没有共同作者表。
+- 互关、二跳、同社区、Jaccard 等由社交图服务派生，不落本表；见 [social-recall.md](social-recall.md)。
 
 ---
 
@@ -570,7 +584,29 @@ CREATE TABLE async_tasks (
 
 ---
 
-## 参考
+# 社交图数据来源（P3，无新表）
+
+`social-graph` 服务无自有数据库，图与社交信号均由现有业务表派生，不新增迁移：
+
+| 信号/边 | 来源表 | 说明 |
+|---|---|---|
+| 用户关注 `FOLLOW` | `ganrag_user.user_follows` | 有向边；互关由双向行检测 |
+| 自己的知识库 `own_kb` | `knowledge_bases.owner_xid` | 库主关系 |
+| 关注库主 `FOLLOWED_AUTHOR` | `user_follows` + `knowledge_bases.owner_xid` | 显式关注用户才算，不由 star 推导 |
+| 协作者 `collaborator` / `CO_MEMBER` | `kb_user_relations.role >= 1` | 同一 KB 成员之间建协作边 |
+| 关注知识库 `starred_kb` | `kb_user_relations.starred = 1` | **star 即关注该库**，不另建表 |
+| star 作者 `starred_author` | `kb_user_relations.starred` + `knowledge_bases.owner_xid` | 按作者聚合的弱兴趣信号 |
+| 文章作者 `self_authored` / 作者关系 | `articles.created_by_xid` | 文章级作者信号 |
+| 时效 | `articles.created_at` / `updated_at` | 发布时间 / 最后修改 |
+| star 热度 | `knowledge_bases.star_count` | 知识库级；文章继承 |
+
+- 社交图服务通过 User/Repository 的内部分页导出 RPC 拉取，不跨 schema JOIN；
+- 二跳、PageRank、Leiden、Jaccard 等为离线派生，不落表；
+- 社交信号只用于排序，不改变权限；完整设计见 [docs/social-recall.md](social-recall.md) 与 [service/social-graph/docs/architecture.md](../service/social-graph/docs/architecture.md)。
+
+---
+
+# 参考
 
 - 设计决策与推导：[data-model.md](data-model.md)
 - 规范（外键 / XID / Redis Key / 内容口径）：根 [AGENTS.md](../AGENTS.md)

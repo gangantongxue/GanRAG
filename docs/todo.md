@@ -19,12 +19,18 @@
 | web 前端实现（P1/P2，现仅 docs；目录结构待定，见 [web/docs/architecture.md](../web/docs/architecture.md)） | 2026-10-15 | ⬜待处理 |
 | 忘记密码接口（发码/验码/重置密码，重置成功后吊销该用户全部 sessions，见 [service/user/docs/architecture.md](../service/user/docs/architecture.md)） | 2026-10-15 | ⬜待处理 |
 | 登录设备管理接口（设备列表 / 踢设备下线，基于 `sessions.device_id` / `device_info` / `last_active_at`） | 2026-10-15 | ⬜待处理 |
-| 文档上传（pdf / docx / html → markitdown 转 md 存 articles.content，不做 OCR）（P1.5，见 [architecture.md](architecture.md)「文档转换」、[product.md](product.md)） | 2026-10-15 | ⬜待处理 |
+| 文档上传（pdf / docx / html → markitdown 转 md 存 Garage（`articles.content_key`），不做 OCR）（P1.5，见 [architecture.md](architecture.md)「文档转换」、[product.md](product.md)） | 2026-10-15 | ⬜待处理 |
 | 多智能体路由与切换（Decima-small：当前 Agent 概率阈值低于设定值后，在全部 Agent 中重新选择）（P1.5，见 [service/ai/docs/architecture.md](../service/ai/docs/architecture.md)「多智能体架构」） | 2026-10-15 | ⬜待处理 |
 | 上下文压缩（约 65% 容量触发；会话级 context + 消息游标；只保留最新隐藏 Agent 提示词并置于摘要前）（P1.5，见 [service/ai/docs/architecture.md](../service/ai/docs/architecture.md)、[data-model.md](data-model.md)「关系状态推导」） | 2026-10-15 | ⬜待处理 |
 | 向量化按模型存储与检索路由（按「知识库 × 向量化模型」分集合）（P1.5，见 [service/vector-store/docs/architecture.md](../service/vector-store/docs/architecture.md)「集合与模型约定」） | 2026-10-15 | ⬜待处理 |
 | P2 社交接口与界面（star / follow / 搜索 / 个人页面；表已建齐只开接口，见 [product.md](product.md)「分期路线」） | 2026-10-15 | ⬜待处理 |
-| P3 多路召回聚合与检索权重接入（权限过滤 → 向量/关键词召回 → 关系/时间/热度重排 → Decima-small 审查，支持调参与消融，见 [product.md](product.md)「检索权重」） | 2026-10-15 | ⬜待处理 |
+| User / Repository 社交图数据导出 RPC（内部分页、xid：关注/粉丝、KB 成员/star、KB 归属；不跨库直连，供 social-graph 全量同步） | 2026-10-20 | ⬜待处理 |
+| `social-graph` 服务 MVP（gograph 图构建、互关 + BFS 1~2 跳、`starred_kb`/`own_kb`/`collaborator`/`starred_author` 索引、内存快照、批量 gRPC、降级；见 [service/social-graph/docs/architecture.md](../service/social-graph/docs/architecture.md)） | 2026-10-20 | ⬜待处理 |
+| AI 服务社交召回接入（候选元数据、知识库 star P95、时效乘性、社交分加性、配置化融合、旧五档回退；见 [social-recall.md](social-recall.md)、[service/ai/docs/architecture.md](../service/ai/docs/architecture.md)「多路召回与聚合审查」） | 2026-10-20 | ⬜待处理 |
+| 知识库 star P95 统计与定期刷新任务（统计参数，不是权重；供 `starScore` 归一化） | 2026-10-20 | ⬜待处理 |
+| 公开数据集下载/预处理与第一层联合校准（T2Ranking 语义基线；Dianping/Douban 一阶社交/star；ChronoQA 时效；DuReader/ZhihuRec 补充；按用户/查询隔离切分；见 [social-recall.md](social-recall.md)） | 2026-10-20 | ⬜待处理 |
+| 第二层复杂图特征消融（二跳、PageRank、Leiden、Jaccard；T2Ranking 合成社交层 + 系数扫描，确定安全区间） | 2026-10-20 | ⬜待处理 |
+| Node2Vec 社交嵌入探索（时间允许时对比，不阻塞主线） | 2026-10-20 | ⬜待处理 |
 | 更新 Decima-small 多智能体路由、隐藏 Agent 系统提示词、65% 上下文压缩及向量/关键词双路召回聚合排序设计文档 | 2026-10-16 | ✅已完成(2026-10-16) |
 | Repository 服务架构文档补齐（[architecture.md](architecture.md)「各服务架构详情」现为 `-`） | 2026-10-15 | ✅已完成(2026-10-17) |
 | **【最高优先级·架构迁移】移除 File Store 服务，直连 Garage（S3）**：删除 `service/file-store/`、`api/proto/file-store/`、`api/gen/file-store/`；Repository 为唯一直接访问 Garage 的服务；单私有桶 + 统一对象 key `o/<object_xid>`；`attachments` 增 `relative_path`（迁移前先 `task db-status`）；前端 Markdown 相对路径 → Gateway `/api/v1/articles/{xid}/resource?path=` → Repository 权限校验 → Presigned URL 302；设计见 [service/repository/docs/architecture.md](../service/repository/docs/architecture.md)「对象存储与文件访问」 | 2026-10-17 | ✅已完成(2026-10-17) |
@@ -33,3 +39,4 @@
 | Repository 服务协议（proto）定义（`api/proto/repository/v1/repository.proto`，P1 内容闭环 23 RPC：知识库/目录树/文章 CRUD、互链解析、正文与资源 gRPC 流式读取（Garage 不对外暴露）、整段+会话式分片上传（断点续传 `GetUploadStatus`；三层完整性校验：单片 sha256 / 合并前结构校验 / 合并后读回 sha256 对比声明值）；`task proto` 生成，`pkg/eid` 注册上传会话前缀 `upl`） | 2026-10-18 | ✅已完成(2026-10-18) |
 | 公共 async_tasks 与服务失败记录（`ganrag_common.async_tasks` + `pkg/asynctask`，业务事务内同事务 outbox，供 Repository 及后续服务 import；含 `task_type`/`payload`/幂等键/状态流转） | 2026-10-18 | ✅已完成(2026-10-18) |
 | Repository 服务实现（阶段一：store/handler/gRPC server、知识库 CRUD、Garage 整段上传 `UploadWhole`、权限校验、删除走 async_tasks outbox；接口用 xid，见 `api/proto/repository/v1`、[database.md](database.md)「ganrag_repository」） | 2026-10-15 | ✅已完成(2026-10-18) |
+| 整合社交关系感知召回与公开数据集调优决策到项目文档（新增 [social-recall.md](social-recall.md)、[service/social-graph/docs/architecture.md](../service/social-graph/docs/architecture.md) 与 README，更新 architecture / product / data-model / database / ai / vector-store / README / todo / fix） | 2026-10-20 | ✅已完成(2026-10-20) |

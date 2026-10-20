@@ -59,7 +59,7 @@ service VectorStore {
 - 检索为精确余弦相似度，结果按相似度降序排列
 - 检索支持元数据精确匹配过滤（`where`）与文档内容过滤（`where_document`，`$contains` / `$not_contains`）
 
-Vector Store 只负责向量写入、向量相似度召回和基础过滤，不负责关键词倒排检索、权限判定、关系/时间/热度重排序或 Decima-small 审查。关键词召回、双路候选合并与最终排序由 AI Service 负责；权限条件由 AI Service 在调用召回前计算并传入，且仍需在应用层保证不可见文档不进入候选集。
+Vector Store 只负责向量写入、向量相似度召回和基础过滤，不负责关键词倒排检索、权限判定、社交关系/star/时效重排序或 Decima-small 审查。关键词召回、双路候选合并与最终排序由 AI Service 负责；权限条件由 AI Service 在调用召回前计算并传入，且仍需在应用层保证不可见文档不进入候选集。
 
 ## 集合与模型约定（P1.5）
 

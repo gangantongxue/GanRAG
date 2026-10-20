@@ -91,6 +91,9 @@ ganrag_common（共享基础设施，pkg/asynctask）
 | Redis Key 规范 | `<服务短名>:<域>:<标识>`（如 `user:email_code:register:<email>`） | 分层命名空间防撞名，服务短名与目录名一致；见根 AGENTS.md「Redis Key 规范」 |
 | 附件清理 | 附件直接挂 `article_id`（`kind` 区分源文件 / 内嵌图片），保存时按正文链接重建 kind=2 并清孤儿 | 少一张绑定表；附件单文章独占，清理路径单一 |
 | 关系单表 | `kb_user_relations` 单表承载成员（role）与收藏（starred）；owner 由 `knowledge_bases.owner_xid` 表示，不入表 | 与「关系状态」口径对齐，少两张表；避免两处真相 |
+| star 粒度 | star 是**知识库级**（`knowledge_bases.star_count` / `kb_user_relations.starred`）；文章热度继承所属 KB，不建 `article_stars` | 产品 star 语义是收藏/关注知识库；文章级 star 未建模，避免额外表与交互 |
+| 文章时间口径 | `created_at` 视为发布时间，`updated_at` 作为最后修改/新鲜度；无 `published_at` | 现有表只有这两个时间字段；时效衰减先用 `updated_at`，如后续需要内容级更新再加 `content_updated_at` |
+| 社交图派生 | `social-graph` 服务无自有数据库；关注/互关/二跳/协作/star 作者由 `user_follows`、`knowledge_bases`、`kb_user_relations` 派生 | 图是只读派生视图，不新增表、不跨库 JOIN；见 [social-recall.md](social-recall.md) |
 | 权重不入库 | 关系状态存库，权重映射由 AI 服务配置持有 | 权重是排序策略、需频繁调参，不是业务事实；存库会把调优变成改数据 |
 | 物理外键 | 全局禁止，一律逻辑引用（应用层保证完整性与级联删除） | 迁移独立、可并行开发；规则见根 AGENTS.md「数据库设计规范」 |
 | 会话范围 | `chat_sessions.kb_xid = ''` 表示全局 | 与根节点约定一致；跨服务只存知识库 xid |
@@ -417,14 +420,27 @@ relation(kb, me) =
   OTHER              以上皆无
 ```
 
-- 可同时命中多个信号；**可见性**（能否看到）与**权重**（排多前）是两件事：可见性由 owner/member/visibility 三者决定，权重取最高命中信号（见 product.md 检索权重表）
+- 可同时命中多个信号；**可见性**（能否看到）与**权重**（排多前）是两件事：可见性由 owner/member/visibility 三者决定，直接关系取最高档，结构派生信号作为加成（见 [social-recall.md](social-recall.md)）
 - 全局检索候选集 SQL 语义：`owner_xid = me OR 存在成员行 OR visibility = 1`，**此过滤必须先于任何加权执行**
+- **star 即关注知识库**：`STARRED` 表示我 star 了该 KB；不另有 follow-kb 关系，关注用户仍由 `user_follows` 表达
+- 文章级关系在 KB 关系之上叠加作者关系：
+
+```text
+self_authored  = articles.created_by_xid = me
+author_follow  = user_follows 存在 (me, articles.created_by_xid)
+collaborator   = 我是该文章所属 KB 的成员（kb_user_relations.role >= 1）
+starred_author = 我 star 过该作者拥有的 KB 数（弱作者聚合）
+mutual_follow  = user_follows 双向存在
+two_hop        = BFS 1~2 跳可达（不存边）
+```
+
+- 互关、二跳、同社区、Jaccard 等均为查询/离线派生，不落表；关系优先级只给序关系，具体分值由 AI 配置与数据集实验标定
 
 ## 检索实现约定（AI 服务落地时遵循）
 
 1. 向量库按「知识库 × 向量化模型」隔离：vector-store 集合 `kb-<kb_xid>-<model_id>`（文章分块入库），全局检索时对可见集合逐个查询后归并；检索只查**当前模型**后缀的集合——用什么模型，就检索对应的向量化结果
 2. 文章保存/删除时，Repository 服务向 AI 服务同步增量（或 AI 订阅），由 AI 负责向量的写入与清理
-3. 检索先做权限硬过滤，再分别走向量与关键词召回并合并去重；重排序使用排名归一化、关系、时间、热度，并由 Decima-small 对前 K 个候选做 `noul` 相关性审查（P1 只做候选集过滤，P3 接入权重与审查）
+3. 检索先做权限硬过滤，再分别走向量与关键词召回并合并去重；基础融合用排名归一化或 RRF，时效乘性衰减，star（知识库级）与社交分数加性融合，最后由 Decima-small 对 Top-K 做 `noul` 相关性审查（P1 只做候选集过滤，P3 接入社交图、权重与审查；见 [social-recall.md](social-recall.md)）
 4. 向量输入统一为 `articles.content_key` 指向的 Garage 对象内 md（pdf/docx/html 即转换后的 md）：转换结果一次存储，重建索引 / 换 embedding 模型不重跑 markitdown；文档内嵌图片不提取，不参与分块
 5. 模型上下文不进用户消息流：压缩上下文存 `chat_sessions.context`，内部结构包含最新 `agent-system` 提示词和摘要；prompt 拼装 = 固定 System Prompt + context + `chat_messages` 中 `id >= context_msg_id` 的可见消息；预计请求 token 达模型上限的 65% 时触发压缩，压缩时**替换** context 并推进游标，最新 Agent 提示词置于摘要前，原始消息不删，`search_context` 排除 `agent-system`
 6. 切换向量化模型：新写入即切新模型集合 → 后台按 `articles.content_key` 读 md **全量重建**新模型集合（不重跑 markitdown）→ 重建完成前旧集合继续服务 → 完成后配置原子切换并下线旧集合（保留期可回滚）；旧向量按 metadata `embedding_model` 批量清理
@@ -444,6 +460,6 @@ relation(kb, me) =
 |------|------|------|
 | P1 | user: 0001-0005（引用 xid 对齐）；repository: 0001-0008（五张表 + 引用 xid 对齐）；ai: 0001-0005（三张表 + 引用 xid 对齐）；common: 0001（async_tasks） | 全部表一次建齐；共享任务表同期落地 |
 | P2 | 无新表 | star / follow / 搜索 / 个人页面接口与界面 |
-| P3 | 无新表 | 权重配置接入与调参 |
+| P3 | 无新表 | 社交图由现有表派生（`social-graph` 服务无自有库）；权重配置接入与公开数据集标定 |
 
 > 表结构先于接口建齐，是为了让关系状态从第一天起就是完整事实；P2 只是把已有数据的读写口打开，不做 DDL 变更。
