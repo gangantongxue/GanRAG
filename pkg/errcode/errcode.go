@@ -15,7 +15,8 @@
 //
 // 业务码为 5 位 HHNNN：前三位 = HTTP 状态码（4 开头客户端错误、5 开头服务端
 // 错误），后两位为该状态码下的序号——00 是通用兜底、01 起为具体业务错误。
-// 分段与全量号表见 README.md（唯一号源，新增业务码先查表再声明）。
+// 业务码一律引用 bizcode.go 的 Code* 常量（代码内唯一号源，禁止裸数字），
+// 分段规则与号表镜像见 README.md。
 //
 // 新增错误码直接在本包（通用错误）或服务 store 层哨兵处用 New 声明即可，
 // 不要复制 status.Error(codes.X, ...) 字面量。
@@ -118,15 +119,15 @@ func (e *Error) Biz() int {
 	return e.biz
 }
 
-// Internal 构造内部错误：细节只写日志，对外统一 "服务内部错误"（兜底业务码 50000）
+// Internal 构造内部错误：细节只写日志，对外统一 "服务内部错误"（兜底码 CodeInternal）
 //
 // 返回：
 //   - *Error: codes.Internal 业务错误
 func Internal() *Error {
-	return New(GenericCode(codes.Internal), codes.Internal, internalMsg)
+	return New(CodeInternal, codes.Internal, internalMsg)
 }
 
-// InvalidArgument 构造参数不合法错误（兜底业务码 40000）
+// InvalidArgument 构造参数不合法错误（兜底码 CodeInvalidArgument）
 //
 // 参数：
 //   - msg: 对外可展示的具体原因
@@ -134,7 +135,7 @@ func Internal() *Error {
 // 返回：
 //   - *Error: codes.InvalidArgument 业务错误
 func InvalidArgument(msg string) *Error {
-	return New(GenericCode(codes.InvalidArgument), codes.InvalidArgument, msg)
+	return New(CodeInvalidArgument, codes.InvalidArgument, msg)
 }
 
 // GenericCode 通用兜底业务码：HTTP 状态码 × 100（序号 00）

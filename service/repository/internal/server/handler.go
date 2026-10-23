@@ -201,7 +201,7 @@ func (h *Handler) UploadWhole(ctx context.Context, req *repositoryv1.UploadWhole
 	sum := sha256.Sum256(req.Data)
 	actual := hex.EncodeToString(sum[:])
 	if actual != declared {
-		return nil, errcode.New(50030, codes.DataLoss, "sha256 校验失败")
+		return nil, errcode.New(errcode.CodeRepoChecksumMismatch, codes.DataLoss, "sha256 校验失败")
 	}
 
 	objectXID := eid.New(eid.Object)

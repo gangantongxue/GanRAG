@@ -13,21 +13,21 @@ import (
 
 // TestNewAndError 验证 New 创建的错误实现 error 接口且消息与业务码一致
 func TestNewAndError(t *testing.T) {
-	e := New(40401, codes.NotFound, "用户不存在")
+	e := New(CodeUserNotFound, codes.NotFound, "用户不存在")
 	if got := e.Error(); got != "用户不存在" {
 		t.Errorf("Error() = %q, 期望 %q", got, "用户不存在")
 	}
 	if got := e.Code(); got != codes.NotFound {
 		t.Errorf("Code() = %v, 期望 %v", got, codes.NotFound)
 	}
-	if got := e.Biz(); got != 40401 {
-		t.Errorf("Biz() = %d, 期望 40401", got)
+	if got := e.Biz(); got != CodeUserNotFound {
+		t.Errorf("Biz() = %d, 期望 %d", got, CodeUserNotFound)
 	}
 }
 
 // TestGRPCStatus 验证 *Error 可被 grpc 框架识别为对应状态
 func TestGRPCStatus(t *testing.T) {
-	e := New(40901, codes.AlreadyExists, "邮箱已注册")
+	e := New(CodeUserEmailTaken, codes.AlreadyExists, "邮箱已注册")
 	st, ok := status.FromError(e)
 	if !ok {
 		t.Fatal("status.FromError 应能识别 *Error")
@@ -37,9 +37,68 @@ func TestGRPCStatus(t *testing.T) {
 	}
 }
 
+// TestCodeValues 撞号防护：全量业务码清单断言互不重复
+//
+// 新增错误码时必须在此登记，否则视为未登记号码。
+func TestCodeValues(t *testing.T) {
+	all := map[int]string{
+		// 通用兜底
+		CodeInvalidArgument: "CodeInvalidArgument", CodeUnauthenticated: "CodeUnauthenticated",
+		CodePermissionDenied: "CodePermissionDenied", CodeNotFound: "CodeNotFound",
+		CodeConflict: "CodeConflict", CodeFailedPrecondition: "CodeFailedPrecondition",
+		CodeResourceExhausted: "CodeResourceExhausted", CodeInternal: "CodeInternal",
+		CodeUnavailable: "CodeUnavailable",
+		// user
+		CodeUserInvalidCredentials: "CodeUserInvalidCredentials", CodeUserTokenInvalid: "CodeUserTokenInvalid",
+		CodeUserTokenExpired: "CodeUserTokenExpired", CodeUserOldPasswordWrong: "CodeUserOldPasswordWrong",
+		CodeUserAuthFailed: "CodeUserAuthFailed", CodeUserEmailCodeInvalid: "CodeUserEmailCodeInvalid",
+		CodeUserNotFound: "CodeUserNotFound", CodeUserEmailTaken: "CodeUserEmailTaken",
+		CodeUserDisabled: "CodeUserDisabled", CodeUserEmailCodeRateLimited: "CodeUserEmailCodeRateLimited",
+		// repository
+		CodeRepoDirectoryMoveIntoSelf: "CodeRepoDirectoryMoveIntoSelf", CodeRepoKBNotFound: "CodeRepoKBNotFound",
+		CodeRepoDirNotFound: "CodeRepoDirNotFound", CodeRepoKBNameTaken: "CodeRepoKBNameTaken",
+		CodeRepoDirNameTaken: "CodeRepoDirNameTaken", CodeRepoChecksumMismatch: "CodeRepoChecksumMismatch",
+		// vector-store
+		CodeVectorCollectionNotFound: "CodeVectorCollectionNotFound", CodeVectorDocumentNotFound: "CodeVectorDocumentNotFound",
+		CodeVectorCollectionExists: "CodeVectorCollectionExists",
+		// 共享包
+		CodeTaskNotFound: "CodeTaskNotFound",
+	}
+	seen := make(map[int]string, len(all))
+	for code, name := range all {
+		if prev, dup := seen[code]; dup {
+			t.Errorf("业务码 %d 撞号：%s 与 %s", code, prev, name)
+		}
+		seen[code] = name
+	}
+}
+
+// TestCodeFallbackConsistency 验证兜底常量与 GenericCode 派生算法一致
+func TestCodeFallbackConsistency(t *testing.T) {
+	cases := []struct {
+		in   codes.Code
+		want int
+	}{
+		{codes.InvalidArgument, CodeInvalidArgument},
+		{codes.Unauthenticated, CodeUnauthenticated},
+		{codes.PermissionDenied, CodePermissionDenied},
+		{codes.NotFound, CodeNotFound},
+		{codes.AlreadyExists, CodeConflict},
+		{codes.FailedPrecondition, CodeFailedPrecondition},
+		{codes.ResourceExhausted, CodeResourceExhausted},
+		{codes.Internal, CodeInternal},
+		{codes.Unavailable, CodeUnavailable},
+	}
+	for _, tc := range cases {
+		if got := GenericCode(tc.in); got != tc.want {
+			t.Errorf("GenericCode(%v) = %d, 期望常量 %d", tc.in, got, tc.want)
+		}
+	}
+}
+
 // TestBizCodeRoundTrip 验证业务码经 status details 跨 gRPC 边界往返不变（含 %w 包装）
 func TestBizCodeRoundTrip(t *testing.T) {
-	sentinel := New(40106, codes.Unauthenticated, "验证码无效或已过期")
+	sentinel := New(CodeUserEmailCodeInvalid, codes.Unauthenticated, "验证码无效或已过期")
 
 	cases := []struct {
 		name string
@@ -52,8 +111,8 @@ func TestBizCodeRoundTrip(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			// 模拟 handler 归一化 → 框架序列化 → 对端 status.FromError 提取
 			got := Status(nil, "op", tc.err)
-			if biz := BizCode(got); biz != 40106 {
-				t.Errorf("BizCode = %d, 期望 40106", biz)
+			if biz := BizCode(got); biz != CodeUserEmailCodeInvalid {
+				t.Errorf("BizCode = %d, 期望 %d", biz, CodeUserEmailCodeInvalid)
 			}
 		})
 	}
@@ -66,9 +125,9 @@ func TestBizCodeFallback(t *testing.T) {
 		err  error
 		want int
 	}{
-		{"直接构造的 status 错误", status.Error(codes.NotFound, "用户不存在"), 40400},
-		{"非 gRPC 错误", errors.New("dial tcp: connection refused"), 50000},
-		{"nil 错误", nil, 50000}, // status.FromError(nil) 视为 OK，走兜底 default
+		{"直接构造的 status 错误", status.Error(codes.NotFound, "用户不存在"), CodeNotFound},
+		{"非 gRPC 错误", errors.New("dial tcp: connection refused"), CodeInternal},
+		{"nil 错误", nil, CodeInternal}, // status.FromError(nil) 视为 OK，走兜底 default
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -81,22 +140,8 @@ func TestBizCodeFallback(t *testing.T) {
 
 // TestGenericCode 验证兜底业务码 = HTTP 码 × 100
 func TestGenericCode(t *testing.T) {
-	cases := []struct {
-		in   codes.Code
-		want int
-	}{
-		{codes.InvalidArgument, 40000},
-		{codes.Unauthenticated, 40100},
-		{codes.NotFound, 40400},
-		{codes.AlreadyExists, 40900},
-		{codes.ResourceExhausted, 42900},
-		{codes.Internal, 50000},
-		{codes.Unavailable, 50200},
-	}
-	for _, tc := range cases {
-		if got := GenericCode(tc.in); got != tc.want {
-			t.Errorf("GenericCode(%v) = %d, 期望 %d", tc.in, got, tc.want)
-		}
+	if got := GenericCode(codes.Unknown); got != 50000 {
+		t.Errorf("GenericCode(Unknown) = %d, 期望兜底 50000", got)
 	}
 }
 

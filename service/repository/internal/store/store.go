@@ -15,11 +15,11 @@ import (
 
 // 业务哨兵错误：错误自带 gRPC 状态码，handler 统一走 errcode.Status 归一化
 var (
-	ErrKnowledgeBaseNotFound  = errcode.New(40430, codes.NotFound, "知识库不存在")
-	ErrKnowledgeBaseNameTaken = errcode.New(40930, codes.AlreadyExists, "知识库名称已存在")
-	ErrDirectoryNotFound      = errcode.New(40431, codes.NotFound, "目录不存在")
-	ErrDirectoryNameTaken     = errcode.New(40931, codes.AlreadyExists, "同级目录名称已存在")
-	ErrDirectoryMoveIntoSelf  = errcode.New(40030, codes.InvalidArgument, "不能移入自身或子孙目录")
+	ErrKnowledgeBaseNotFound  = errcode.New(errcode.CodeRepoKBNotFound, codes.NotFound, "知识库不存在")
+	ErrKnowledgeBaseNameTaken = errcode.New(errcode.CodeRepoKBNameTaken, codes.AlreadyExists, "知识库名称已存在")
+	ErrDirectoryNotFound      = errcode.New(errcode.CodeRepoDirNotFound, codes.NotFound, "目录不存在")
+	ErrDirectoryNameTaken     = errcode.New(errcode.CodeRepoDirNameTaken, codes.AlreadyExists, "同级目录名称已存在")
+	ErrDirectoryMoveIntoSelf  = errcode.New(errcode.CodeRepoDirectoryMoveIntoSelf, codes.InvalidArgument, "不能移入自身或子孙目录")
 )
 
 // 知识库列表 scope（对齐 api/proto/repository/v1 ListKnowledgeBasesRequest）

@@ -32,17 +32,17 @@ const (
 // （如登录防账号枚举）。错误码统一由 pkg/errcode 定义，不要在服务内另行发明映射。
 var (
 	// errInvalidCredentials 登录失败（邮箱不存在与密码错误同消息，防账号枚举）
-	errInvalidCredentials = errcode.New(40101, codes.Unauthenticated, "邮箱或密码错误")
+	errInvalidCredentials = errcode.New(errcode.CodeUserInvalidCredentials, codes.Unauthenticated, "邮箱或密码错误")
 	// errAuthFailed 改密时 token 中的用户已失效（凭证陈旧），统一按认证失败处理
-	errAuthFailed = errcode.New(40105, codes.Unauthenticated, "认证失败")
+	errAuthFailed = errcode.New(errcode.CodeUserAuthFailed, codes.Unauthenticated, "认证失败")
 	// errTokenInvalid refresh token 无效（伪造 / 已失效 / 关联用户不存在，不区分细节防探测）
-	errTokenInvalid = errcode.New(40102, codes.Unauthenticated, "refresh token 无效")
+	errTokenInvalid = errcode.New(errcode.CodeUserTokenInvalid, codes.Unauthenticated, "refresh token 无效")
 	// errTokenExpired refresh token 自然过期
-	errTokenExpired = errcode.New(40103, codes.Unauthenticated, "refresh token 已过期")
+	errTokenExpired = errcode.New(errcode.CodeUserTokenExpired, codes.Unauthenticated, "refresh token 已过期")
 	// errOldPasswordWrong 改密时旧密码错误
-	errOldPasswordWrong = errcode.New(40104, codes.Unauthenticated, "旧密码错误")
+	errOldPasswordWrong = errcode.New(errcode.CodeUserOldPasswordWrong, codes.Unauthenticated, "旧密码错误")
 	// errUserDisabled 账号被禁用
-	errUserDisabled = errcode.New(41201, codes.FailedPrecondition, "账号已被禁用")
+	errUserDisabled = errcode.New(errcode.CodeUserDisabled, codes.FailedPrecondition, "账号已被禁用")
 )
 
 // Handler 实现 userv1.UserServiceServer

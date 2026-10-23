@@ -9,6 +9,7 @@ import (
 	"github.com/cloudwego/hertz/pkg/app"
 	"golang.org/x/time/rate"
 
+	"github.com/gangantongxue/GanRAG/pkg/errcode"
 	"github.com/gangantongxue/GanRAG/service/gateway/internal/config"
 	"github.com/gangantongxue/GanRAG/service/gateway/pkg/auth"
 )
@@ -82,9 +83,9 @@ func (l *RateLimiter) DefaultMiddleware() app.HandlerFunc {
 func (l *RateLimiter) middleware(r rule) app.HandlerFunc {
 	return func(ctx context.Context, c *app.RequestContext) {
 		if !l.allow(key(c), r) {
-			// 统一信封错误体：兜底业务码 42900 = HTTP 429 × 100
+			// 统一信封错误体：兜底码 CodeResourceExhausted
 			c.AbortWithStatusJSON(429, map[string]any{
-				"code":    42900,
+				"code":    errcode.CodeResourceExhausted,
 				"message": "请求过于频繁，请稍后重试",
 				"data":    nil,
 			})

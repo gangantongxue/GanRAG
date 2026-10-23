@@ -25,14 +25,14 @@ import (
 // 哨兵错误：错误自带 gRPC 状态码，handler 统一走 errcode.Status 归一化
 // （映射逻辑见 pkg/errcode，禁止在服务内另行定义错误码映射）
 var (
-	// ErrInvalidArgument 入参不合法（codes.InvalidArgument，兜底业务码 40000）
+	// ErrInvalidArgument 入参不合法（codes.InvalidArgument，兜底码 CodeInvalidArgument）
 	ErrInvalidArgument = errcode.InvalidArgument("参数不合法")
 	// ErrCollectionNotFound 集合不存在（codes.NotFound）
-	ErrCollectionNotFound = errcode.New(40460, codes.NotFound, "集合不存在")
+	ErrCollectionNotFound = errcode.New(errcode.CodeVectorCollectionNotFound, codes.NotFound, "集合不存在")
 	// ErrCollectionExists 集合已存在（codes.AlreadyExists）
-	ErrCollectionExists = errcode.New(40960, codes.AlreadyExists, "集合已存在")
+	ErrCollectionExists = errcode.New(errcode.CodeVectorCollectionExists, codes.AlreadyExists, "集合已存在")
 	// ErrDocumentNotFound 文档不存在（codes.NotFound）
-	ErrDocumentNotFound = errcode.New(40461, codes.NotFound, "文档不存在")
+	ErrDocumentNotFound = errcode.New(errcode.CodeVectorDocumentNotFound, codes.NotFound, "文档不存在")
 )
 
 // errEmbeddingNotSupported 表示本服务不接受"由存储端生成向量"

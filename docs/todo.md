@@ -42,3 +42,4 @@
 | 整合社交关系感知召回与公开数据集调优决策到项目文档（新增 [social-recall.md](social-recall.md)、[service/social-graph/docs/architecture.md](../service/social-graph/docs/architecture.md) 与 README，更新 architecture / product / data-model / database / ai / vector-store / README / todo / fix） | 2026-10-20 | ✅已完成(2026-10-20) |
 | Repository 服务实现（阶段二a：目录树 5 RPC：`CreateDirectory`/`UpdateDirectory`/`MoveDirectory`/`DeleteDirectory`/`GetDirectoryTree`，级联删除子树 + 对象清理 outbox） | 2026-10-18 | ✅已完成(2026-10-23) |
 | 响应信封统一 + HTTP 对齐业务错误码：前后端通信统一 `{code, message, data}` 信封（成功 `code=200`、失败 `code=业务码`）；业务码 5 位 `HHNNN`=HTTP 码×100+序号（4 开头客户端错误、5 开头服务端错误），经 gRPC status details 跨服务携带，`pkg/errcode` 号表为唯一号源（见 [pkg/errcode/README.md](../pkg/errcode/README.md)） | 2026-10-23 | ✅已完成(2026-10-23) |
+| 业务错误码常量化：`pkg/errcode/bizcode.go` 声明 `Code*` 常量（代码内唯一号源，按服务分段），哨兵声明与 Gateway 兜底码一律引用常量禁止裸数字，`TestCodeValues` 清单防撞号 | 2026-10-23 | ✅已完成(2026-10-23) |

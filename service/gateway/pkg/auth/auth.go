@@ -12,6 +12,7 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 
 	"github.com/gangantongxue/GanRAG/pkg/eid"
+	"github.com/gangantongxue/GanRAG/pkg/errcode"
 )
 
 // userXIDKey 用户 xid 在请求上下文中的存储键
@@ -119,5 +120,5 @@ func bearerToken(header []byte) (string, bool) {
 // 错误体结构与全服务统一约定一致：{"code": <业务码>, "message": <可展示信息>, "data": null}，
 // 兜底业务码 = HTTP 状态码 × 100（401 → 40100）。
 func writeUnauthorized(c *app.RequestContext, msg string) {
-	c.AbortWithStatusJSON(401, map[string]any{"code": 40100, "message": msg, "data": nil})
+	c.AbortWithStatusJSON(401, map[string]any{"code": errcode.CodeUnauthenticated, "message": msg, "data": nil})
 }

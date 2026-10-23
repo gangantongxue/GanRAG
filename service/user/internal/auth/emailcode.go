@@ -43,9 +43,9 @@ const (
 // 验证码相关哨兵错误（错误自带 gRPC 状态码，handler 走 errcode.Status 直出）
 var (
 	// ErrEmailCodeInvalid 验证码无效（错误 / 过期 / 已作废，不细分防探测）
-	ErrEmailCodeInvalid = errcode.New(40106, codes.Unauthenticated, "验证码无效或已过期")
+	ErrEmailCodeInvalid = errcode.New(errcode.CodeUserEmailCodeInvalid, codes.Unauthenticated, "验证码无效或已过期")
 	// ErrEmailCodeRateLimited 触发 60s 发送限频
-	ErrEmailCodeRateLimited = errcode.New(42901, codes.ResourceExhausted, "发送过于频繁，请稍后再试")
+	ErrEmailCodeRateLimited = errcode.New(errcode.CodeUserEmailCodeRateLimited, codes.ResourceExhausted, "发送过于频繁，请稍后再试")
 )
 
 // emailRe 邮箱格式简单口径：x@y.z，不允许空白
