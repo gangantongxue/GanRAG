@@ -80,7 +80,9 @@ AI 不得：
 业务错误与错误码**统一使用 `pkg/errcode`**（规范详见 [pkg/errcode/README.md](pkg/errcode/README.md)）。
 
 - **禁止**在各服务内自行定义错误码映射（如手写 `errors.Is` + `status.Error(codes.X, ...)` 映射表）
-- store 层哨兵错误一律用 `errcode.New(codes.X, "消息")` 定义（错误自带 gRPC 状态码）
+- store 层哨兵错误一律用 `errcode.New(业务码, codes.X, "消息")` 定义（错误自带 gRPC 状态码与业务码）
 - handler 返回错误统一走 `errcode.Status(h.log, op, err)` 归一化；一次性校验用 `errcode.InvalidArgument(msg)`，内部错误用 `errcode.Internal()`
-- gRPC → HTTP 状态码转换（Gateway）统一用 `errcode.HTTPStatus(code)`
-- **新增错误码在 `pkg/errcode`（通用）或服务 `internal/store` 哨兵处用 `New` 声明**，不要复制状态码字面量
+- **业务错误码 5 位 `HHNNN`**：前三位 = HTTP 状态码（4 开头客户端错误、5 开头服务端错误），后两位序号 `00` 为通用兜底、`01` 起为具体业务错误；**[pkg/errcode/README.md](pkg/errcode/README.md) 号表是唯一号源**，新增业务码先查表取本服务分段内新号再声明
+- **前后端通信统一 `{code, message, data}` 信封**（Gateway 组装）：成功 `code=200`、业务数据在 `data`；失败 `code=业务码`、`data=null`；HTTP 状态码只作传输语义，前端判别只看 `code`
+- gRPC → HTTP 状态码转换（Gateway）统一用 `errcode.HTTPStatus(code)`；业务码经 gRPC status details 跨服务携带，Gateway 用 `errcode.BizCode(err)` 提取
+- **新增错误码在 `pkg/errcode`（通用）或服务 `internal/store` 哨兵处用 `New` 声明并登记号表**，不要复制状态码字面量

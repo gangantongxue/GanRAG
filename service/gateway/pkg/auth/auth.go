@@ -114,9 +114,10 @@ func bearerToken(header []byte) (string, bool) {
 	return strings.TrimSpace(s[len(prefix):]), true
 }
 
-// writeUnauthorized 写 401 统一错误体并中断后续处理
+// writeUnauthorized 写 401 统一信封错误体并中断后续处理
 //
-// 错误体结构与全服务统一约定一致：{"code": <HTTP 状态码>, "message": <可展示信息>}。
+// 错误体结构与全服务统一约定一致：{"code": <业务码>, "message": <可展示信息>, "data": null}，
+// 兜底业务码 = HTTP 状态码 × 100（401 → 40100）。
 func writeUnauthorized(c *app.RequestContext, msg string) {
-	c.AbortWithStatusJSON(401, map[string]any{"code": 401, "message": msg})
+	c.AbortWithStatusJSON(401, map[string]any{"code": 40100, "message": msg, "data": nil})
 }

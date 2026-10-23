@@ -40,6 +40,9 @@ func newTestStore(t *testing.T) (*Store, *gorm.DB) {
 	if err := db.Exec("CREATE UNIQUE INDEX uk_kb_owner_name ON knowledge_bases (owner_xid, name)").Error; err != nil {
 		t.Fatalf("创建知识库唯一索引失败: %v", err)
 	}
+	if err := db.Exec("CREATE UNIQUE INDEX uk_dir_parent_name ON directories (kb_id, parent_id, name)").Error; err != nil {
+		t.Fatalf("创建目录唯一索引失败: %v", err)
+	}
 	if err := db.Exec("CREATE UNIQUE INDEX uk_async_tasks_dedupe ON async_tasks (source_service, task_type, dedupe_key)").Error; err != nil {
 		t.Fatalf("创建任务唯一索引失败: %v", err)
 	}

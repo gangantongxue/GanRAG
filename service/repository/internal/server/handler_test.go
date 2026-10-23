@@ -68,6 +68,9 @@ func newTestHandler(t *testing.T) (*Handler, *fakeObjects, *fakeCleanup) {
 	if err := db.Exec("CREATE UNIQUE INDEX uk_kb_owner_name ON knowledge_bases (owner_xid, name)").Error; err != nil {
 		t.Fatalf("创建知识库唯一索引失败: %v", err)
 	}
+	if err := db.Exec("CREATE UNIQUE INDEX uk_dir_parent_name ON directories (kb_id, parent_id, name)").Error; err != nil {
+		t.Fatalf("创建目录唯一索引失败: %v", err)
+	}
 
 	objects := &fakeObjects{}
 	cleaner := &fakeCleanup{}

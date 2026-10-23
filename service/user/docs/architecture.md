@@ -197,18 +197,18 @@ message RevokeSessionResponse {}
 
 ### 约束与错误码
 
-> 错误码统一定义与映射见 [pkg/errcode](../../../pkg/errcode/README.md)，服务内不自行定义（含防枚举覆盖错误）。
+> 错误码统一定义与映射见 [pkg/errcode](../../../pkg/errcode/README.md)（业务码号表为唯一号源），服务内不自行定义（含防枚举覆盖错误）。
 
-| RPC | 约束 | 错误码 |
+| RPC | 约束 | 错误码（业务码见 [pkg/errcode 号表](../../../pkg/errcode/README.md)） |
 |-----|------|--------|
-| SendEmailCode | 邮箱格式、scene 合法、发送限频（60s） | `InvalidArgument` 参数不合法；`ResourceExhausted` 触发限频 |
-| Register | 邮箱唯一、验证码有效（TTL 5 分钟 / 一次性 / 失败 5 次作废）、密码 8-64 字符 | `InvalidArgument` 参数不合法；`Unauthenticated` 验证码无效；`AlreadyExists` 邮箱已注册 |
-| Login | 邮箱不存在与密码错误**统一返回** `Unauthenticated` | `Unauthenticated`；`FailedPrecondition` 用户被禁用 |
-| Refresh | token 过期 / 无效（含轮换后旧 token 复用，按无效拒绝） | `Unauthenticated` |
-| GetUser | 目标不存在 | `NotFound` |
-| UpdatePassword | user_xid 不合法、新密码不合法 | `InvalidArgument`；`Unauthenticated` 旧密码错误或用户不存在（user_xid 由 Gateway 从 token 注入，用户不存在说明凭证陈旧，与防枚举策略一致，不返回 `NotFound`） |
-| ResetPassword | 验证码有效、新密码 8-64 字符 | `InvalidArgument`；`Unauthenticated` 验证码无效（「忘记密码接口」） |
-| ListSessions / RevokeSession | user_xid 由 Gateway 注入；session_xid 需归属该用户 | `InvalidArgument`；`NotFound` 会话不存在（「登录设备管理接口」） |
+| SendEmailCode | 邮箱格式、scene 合法、发送限频（60s） | `InvalidArgument` 参数不合法（40000）；`ResourceExhausted` 触发限频（42901 发送过于频繁） |
+| Register | 邮箱唯一、验证码有效（TTL 5 分钟 / 一次性 / 失败 5 次作废）、密码 8-64 字符 | `InvalidArgument` 参数不合法（40000）；`Unauthenticated` 验证码无效（40106）；`AlreadyExists` 邮箱已注册（40901） |
+| Login | 邮箱不存在与密码错误**统一返回** `Unauthenticated` | `Unauthenticated`（40101 邮箱或密码错误）；`FailedPrecondition` 用户被禁用（41201） |
+| Refresh | token 过期 / 无效（含轮换后旧 token 复用，按无效拒绝） | `Unauthenticated`（40102 无效 / 40103 已过期） |
+| GetUser | 目标不存在 | `NotFound`（40401 用户不存在） |
+| UpdatePassword | user_xid 不合法、新密码不合法 | `InvalidArgument`（40000）；`Unauthenticated` 旧密码错误或用户不存在（40104 / 40105，user_xid 由 Gateway 从 token 注入，用户不存在说明凭证陈旧，与防枚举策略一致，不返回 `NotFound`） |
+| ResetPassword | 验证码有效、新密码 8-64 字符 | `InvalidArgument`（40000）；`Unauthenticated` 验证码无效（40106，「忘记密码接口」） |
+| ListSessions / RevokeSession | user_xid 由 Gateway 注入；session_xid 需归属该用户 | `InvalidArgument`（40000）；`NotFound` 会话不存在（「登录设备管理接口」，实现时登记号表取号） |
 
 - Login 不区分「邮箱不存在」与「密码错误」，防止账号枚举；Register / ResetPassword 同样不回传「邮箱是否已注册」等可枚举信息
 - 所有接口错误细节只写日志，不回传内部信息（与 vector-store 约定一致）

@@ -9,7 +9,7 @@
 | env 配置统一到仓库根 `.env`（服务启动自动加载根 `.env`、删 `service/user/.env`、根 `.env` 补齐 JWT/Redis/邮件占位等全部变量，`.env.example` 与文档同步） | 2026-10-17 | ✅已完成(2026-10-17) |
 | 引入 Redis（compose + 配置 + go-redis）+ 邮箱验证码落 Redis（`user:email_code:<scene>:<email>`，TTL 5 分钟、一次性、失败 5 次作废、发送 60s 限频）+ 验证码邮件发送通道（SMTP 落地时定） | 2026-10-15 | ✅已完成(2026-10-17) |
 | users 相关代码适配（建表迁移已交付 2026-10-15）：注册/登录改「邮箱+密码」、注册接邮箱验证码、执行 `task db-gen` 并适配 store/handler 到新表结构 | 2026-10-15 | ✅已完成(2026-10-17) |
-| Repository 服务实现（阶段二：目录树 5 RPC + 文章 6 RPC + `GetResource` + `ResolveReference`，正文/附件流式读写与相对路径解析） | 2026-10-18 | ⬜待处理 |
+| Repository 服务实现（阶段二b：文章 5 RPC + `GetResource` + `ResolveReference`，正文/附件流式读写与相对路径解析） | 2026-10-18 | ⬜待处理 |
 | Repository 服务实现（阶段三：分片上传 5 RPC：`InitUpload`/`UploadPart`/`GetUploadStatus`/`CompleteUpload`/`AbortUpload`，断点续传与三层完整性校验） | 2026-10-18 | ⬜待处理 |
 | async_tasks 重试 worker + 后台查询接口（按 `status=0` 集中处理，展示 `source_service`/`task_type`/`payload`/`last_error`） | 2026-10-18 | ⬜待处理 |
 | 其他服务接入 `pkg/asynctask` 失败上报（AI / vector-store / user 按需） | 2026-10-18 | ⬜待处理 |
@@ -40,3 +40,5 @@
 | 公共 async_tasks 与服务失败记录（`ganrag_common.async_tasks` + `pkg/asynctask`，业务事务内同事务 outbox，供 Repository 及后续服务 import；含 `task_type`/`payload`/幂等键/状态流转） | 2026-10-18 | ✅已完成(2026-10-18) |
 | Repository 服务实现（阶段一：store/handler/gRPC server、知识库 CRUD、Garage 整段上传 `UploadWhole`、权限校验、删除走 async_tasks outbox；接口用 xid，见 `api/proto/repository/v1`、[database.md](database.md)「ganrag_repository」） | 2026-10-15 | ✅已完成(2026-10-18) |
 | 整合社交关系感知召回与公开数据集调优决策到项目文档（新增 [social-recall.md](social-recall.md)、[service/social-graph/docs/architecture.md](../service/social-graph/docs/architecture.md) 与 README，更新 architecture / product / data-model / database / ai / vector-store / README / todo / fix） | 2026-10-20 | ✅已完成(2026-10-20) |
+| Repository 服务实现（阶段二a：目录树 5 RPC：`CreateDirectory`/`UpdateDirectory`/`MoveDirectory`/`DeleteDirectory`/`GetDirectoryTree`，级联删除子树 + 对象清理 outbox） | 2026-10-18 | ✅已完成(2026-10-23) |
+| 响应信封统一 + HTTP 对齐业务错误码：前后端通信统一 `{code, message, data}` 信封（成功 `code=200`、失败 `code=业务码`）；业务码 5 位 `HHNNN`=HTTP 码×100+序号（4 开头客户端错误、5 开头服务端错误），经 gRPC status details 跨服务携带，`pkg/errcode` 号表为唯一号源（见 [pkg/errcode/README.md](../pkg/errcode/README.md)） | 2026-10-23 | ✅已完成(2026-10-23) |

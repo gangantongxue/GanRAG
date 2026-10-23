@@ -16,9 +16,9 @@ import (
 // （同一错误在不同 RPC 有契约分歧时由 handler 覆盖，见 server 包上下文错误变量；
 // 映射逻辑统一在 pkg/errcode，禁止在服务内另行定义错误码映射）
 var (
-	ErrUserNotFound    = errcode.New(codes.NotFound, "用户不存在")                   // 按 ID / xid / 邮箱均未命中
-	ErrEmailTaken      = errcode.New(codes.AlreadyExists, "邮箱已注册")              // 注册时邮箱冲突
-	ErrSessionNotFound = errcode.New(codes.Unauthenticated, "refresh token 无效") // 哈希未命中 / 并发轮换（伪造或已失效）
+	ErrUserNotFound    = errcode.New(40401, codes.NotFound, "用户不存在")                   // 按 ID / xid / 邮箱均未命中
+	ErrEmailTaken      = errcode.New(40901, codes.AlreadyExists, "邮箱已注册")              // 注册时邮箱冲突
+	ErrSessionNotFound = errcode.New(40102, codes.Unauthenticated, "refresh token 无效") // 哈希未命中 / 并发轮换（伪造或已失效）
 )
 
 // 用户状态常量（对应 users.status 列）

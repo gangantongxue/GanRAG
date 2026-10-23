@@ -174,7 +174,7 @@ func TestRegister_已存在映射409(t *testing.T) {
 		t.Fatalf("状态码 = %d，期望 409", w.Code)
 	}
 	body := w.Body.String()
-	if !strings.Contains(body, `"code":409`) || !strings.Contains(body, "邮箱已注册") {
+	if !strings.Contains(body, `"code":40900`) || !strings.Contains(body, "邮箱已注册") {
 		t.Errorf("错误体不合规: %s", body)
 	}
 }
@@ -258,7 +258,7 @@ func TestMe_未认证返回401(t *testing.T) {
 	if w.Code != 401 {
 		t.Fatalf("状态码 = %d，期望 401", w.Code)
 	}
-	if !strings.Contains(w.Body.String(), `"code":401`) {
+	if !strings.Contains(w.Body.String(), `"code":40100`) {
 		t.Errorf("错误体不合规: %s", w.Body.String())
 	}
 }

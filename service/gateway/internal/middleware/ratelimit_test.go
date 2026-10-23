@@ -47,7 +47,7 @@ func TestAuthMiddleware_超限返回429(t *testing.T) {
 		t.Fatalf("第 3 个请求状态码 = %d，期望 429", w.Code)
 	}
 	body := w.Body.String()
-	if !strings.Contains(body, `"code":429`) || !strings.Contains(body, `"message"`) {
+	if !strings.Contains(body, `"code":42900`) || !strings.Contains(body, `"message"`) {
 		t.Errorf("429 错误体不合规: %s", body)
 	}
 }

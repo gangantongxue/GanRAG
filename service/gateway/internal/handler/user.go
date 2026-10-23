@@ -218,9 +218,9 @@ func (h *UserHandler) respond(c *app.RequestContext, resp proto.Message, err err
 	writeProto(c, resp)
 }
 
-// writeProto 将 gRPC 响应用 protojson 序列化为 HTTP 200 直出
+// writeProto 将 gRPC 响应用 protojson 序列化后包进统一信封 {"code": 200, "message": "ok", "data": ...}
 //
-// 字段名遵循 proto 的 JSON 名称（camelCase），前端字段与 proto 定义一一对应，
+// data 内字段名遵循 proto 的 JSON 名称（camelCase），前端字段与 proto 定义一一对应，
 // 无需在网关层维护重复的响应结构体。
 //
 // 参数：
@@ -235,20 +235,33 @@ func writeProto(c *app.RequestContext, m proto.Message) {
 	}
 	c.SetStatusCode(200)
 	c.SetContentType("application/json")
-	c.SetBodyString(string(b))
+	// protojson 结果是合法 JSON 值，直接嵌入信封 data 槽位（空消息为 {}）
+	c.SetBodyString(`{"code":200,"message":"ok","data":` + string(b) + `}`)
 }
 
-// writeError 写统一错误体 {"code": <HTTP 状态码>, "message": <可展示信息>} 并中断后续处理
+// writeError 写统一信封错误体 {"code": <兜底业务码>, "message": <可展示信息>, "data": null}
+// 并中断后续处理（兜底业务码 = HTTP 状态码 × 100）
 //
 // 参数：
 //   - c: Hertz 请求上下文
-//   - code: HTTP 状态码（同时写入响应体 code 字段）
+//   - code: HTTP 状态码（同时推导兜底业务码 code×100）
 //   - message: 可直接展示给用户的错误信息
 func writeError(c *app.RequestContext, code int, message string) {
-	c.AbortWithStatusJSON(code, map[string]any{"code": code, "message": message})
+	writeErrorBiz(c, code, code*100, message)
 }
 
-// writeRPCError 将 gRPC 状态码映射为 HTTP 状态码与统一错误体，错误细节只写日志
+// writeErrorBiz 写带具体业务码的统一信封错误体（业务错误经 errcode.BizCode 提取）
+//
+// 参数：
+//   - c: Hertz 请求上下文
+//   - code: HTTP 状态码（传输语义）
+//   - biz: 业务错误码（前端判别用，5 位 HHNNN）
+//   - message: 可直接展示给用户的错误信息
+func writeErrorBiz(c *app.RequestContext, code, biz int, message string) {
+	c.AbortWithStatusJSON(code, map[string]any{"code": biz, "message": message, "data": nil})
+}
+
+// writeRPCError 将 gRPC 状态码映射为 HTTP 状态码与统一信封错误体，错误细节只写日志
 //
 // 参数：
 //   - c: Hertz 请求上下文
@@ -272,7 +285,8 @@ func (h *UserHandler) writeRPCError(c *app.RequestContext, err error, op string)
 		h.log.Error("下游不可用", "op", op, "err", st.Message())
 		writeError(c, 502, "下游服务不可用")
 	default:
-		// 业务错误（参数不合法、未认证、冲突等）：message 由 user 服务设计为可直接展示
-		writeError(c, errcode.HTTPStatus(st.Code()), st.Message())
+		// 业务错误（参数不合法、未认证、冲突等）：message 由 user 服务设计为可直接展示，
+		// 业务码从 gRPC status details 提取（取不到按 gRPC 码兜底）
+		writeErrorBiz(c, errcode.HTTPStatus(st.Code()), errcode.BizCode(err), st.Message())
 	}
 }

@@ -11,26 +11,92 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-// TestNewAndError 验证 New 创建的错误实现 error 接口且消息一致
+// TestNewAndError 验证 New 创建的错误实现 error 接口且消息与业务码一致
 func TestNewAndError(t *testing.T) {
-	e := New(codes.NotFound, "资源不存在")
-	if got := e.Error(); got != "资源不存在" {
-		t.Errorf("Error() = %q, 期望 %q", got, "资源不存在")
+	e := New(40401, codes.NotFound, "用户不存在")
+	if got := e.Error(); got != "用户不存在" {
+		t.Errorf("Error() = %q, 期望 %q", got, "用户不存在")
 	}
 	if got := e.Code(); got != codes.NotFound {
 		t.Errorf("Code() = %v, 期望 %v", got, codes.NotFound)
+	}
+	if got := e.Biz(); got != 40401 {
+		t.Errorf("Biz() = %d, 期望 40401", got)
 	}
 }
 
 // TestGRPCStatus 验证 *Error 可被 grpc 框架识别为对应状态
 func TestGRPCStatus(t *testing.T) {
-	e := New(codes.AlreadyExists, "用户名已存在")
+	e := New(40901, codes.AlreadyExists, "邮箱已注册")
 	st, ok := status.FromError(e)
 	if !ok {
 		t.Fatal("status.FromError 应能识别 *Error")
 	}
-	if st.Code() != codes.AlreadyExists || st.Message() != "用户名已存在" {
-		t.Errorf("状态 = (%v, %q), 期望 (AlreadyExists, 用户名已存在)", st.Code(), st.Message())
+	if st.Code() != codes.AlreadyExists || st.Message() != "邮箱已注册" {
+		t.Errorf("状态 = (%v, %q), 期望 (AlreadyExists, 邮箱已注册)", st.Code(), st.Message())
+	}
+}
+
+// TestBizCodeRoundTrip 验证业务码经 status details 跨 gRPC 边界往返不变（含 %w 包装）
+func TestBizCodeRoundTrip(t *testing.T) {
+	sentinel := New(40106, codes.Unauthenticated, "验证码无效或已过期")
+
+	cases := []struct {
+		name string
+		err  error
+	}{
+		{"裸哨兵", sentinel},
+		{"%w 包装", fmt.Errorf("%w: 123456", sentinel)},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			// 模拟 handler 归一化 → 框架序列化 → 对端 status.FromError 提取
+			got := Status(nil, "op", tc.err)
+			if biz := BizCode(got); biz != 40106 {
+				t.Errorf("BizCode = %d, 期望 40106", biz)
+			}
+		})
+	}
+}
+
+// TestBizCodeFallback 验证无业务码 details 时按 gRPC 码兜底（HTTP 码×100）
+func TestBizCodeFallback(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+		want int
+	}{
+		{"直接构造的 status 错误", status.Error(codes.NotFound, "用户不存在"), 40400},
+		{"非 gRPC 错误", errors.New("dial tcp: connection refused"), 50000},
+		{"nil 错误", nil, 50000}, // status.FromError(nil) 视为 OK，走兜底 default
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := BizCode(tc.err); got != tc.want {
+				t.Errorf("BizCode = %d, 期望 %d", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestGenericCode 验证兜底业务码 = HTTP 码 × 100
+func TestGenericCode(t *testing.T) {
+	cases := []struct {
+		in   codes.Code
+		want int
+	}{
+		{codes.InvalidArgument, 40000},
+		{codes.Unauthenticated, 40100},
+		{codes.NotFound, 40400},
+		{codes.AlreadyExists, 40900},
+		{codes.ResourceExhausted, 42900},
+		{codes.Internal, 50000},
+		{codes.Unavailable, 50200},
+	}
+	for _, tc := range cases {
+		if got := GenericCode(tc.in); got != tc.want {
+			t.Errorf("GenericCode(%v) = %d, 期望 %d", tc.in, got, tc.want)
+		}
 	}
 }
 
@@ -56,7 +122,7 @@ func TestStatusNil(t *testing.T) {
 
 // TestStatusBusinessError 验证业务错误的转换：码来自哨兵，消息取完整上下文
 func TestStatusBusinessError(t *testing.T) {
-	sentinel := New(codes.NotFound, "集合不存在")
+	sentinel := New(40400, codes.NotFound, "集合不存在")
 
 	cases := []struct {
 		name string

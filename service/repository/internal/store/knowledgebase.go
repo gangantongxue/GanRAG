@@ -219,18 +219,28 @@ func collectObjectXIDs(ctx context.Context, tx *gorm.DB, kbID int64) ([]string, 
 		Pluck("object_xid", &attachmentXIDs).Error; err != nil {
 		return nil, err
 	}
+	return dedupeObjectXIDs(contentXIDs, attachmentXIDs)
+}
 
-	seen := make(map[string]struct{}, len(contentXIDs)+len(attachmentXIDs))
-	out := make([]string, 0, len(contentXIDs)+len(attachmentXIDs))
-	for _, xid := range append(contentXIDs, attachmentXIDs...) {
-		if _, ok := seen[xid]; ok {
-			continue
+// dedupeObjectXIDs 多组对象 xid 去重并校验（非法 xid 视为数据损坏，报错中止删除）
+func dedupeObjectXIDs(xidLists ...[]string) ([]string, error) {
+	total := 0
+	for _, list := range xidLists {
+		total += len(list)
+	}
+	seen := make(map[string]struct{}, total)
+	out := make([]string, 0, total)
+	for _, list := range xidLists {
+		for _, xid := range list {
+			if _, ok := seen[xid]; ok {
+				continue
+			}
+			if !eid.Match(xid, eid.Object) {
+				return nil, fmt.Errorf("对象 xid 非法: %s", xid)
+			}
+			seen[xid] = struct{}{}
+			out = append(out, xid)
 		}
-		if !eid.Match(xid, eid.Object) {
-			return nil, fmt.Errorf("对象 xid 非法: %s", xid)
-		}
-		seen[xid] = struct{}{}
-		out = append(out, xid)
 	}
 	return out, nil
 }

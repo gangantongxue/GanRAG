@@ -109,7 +109,7 @@ func TestMiddleware_Rejected(t *testing.T) {
 				t.Fatalf("状态码 = %d，期望 401", w.Code)
 			}
 			body := w.Body.String()
-			if !strings.Contains(body, `"code":401`) || !strings.Contains(body, `"message"`) {
+			if !strings.Contains(body, `"code":40100`) || !strings.Contains(body, `"message"`) {
 				t.Errorf("错误体不合规: %s", body)
 			}
 		})

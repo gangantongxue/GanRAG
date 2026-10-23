@@ -39,9 +39,11 @@ Hertz 是字节跳动开源的高性能 HTTP 框架，具有以下特点：
 
 ## 接口设计
 
-响应格式：
-- 成功：HTTP 200 + protojson 直出 gRPC 响应（字段为 proto 的 JSON 名称），前端字段与 proto 定义一一对应
-- 失败：统一错误体 `{"code": <HTTP 状态码>, "message": <可展示信息>}`，错误细节只写日志
+响应格式（统一信封 `{code, message, data}`，定稿 2026-10-23，见 [pkg/errcode/README.md](../../pkg/errcode/README.md)）：
+- 成功：HTTP 200 + `{"code": 200, "message": "ok", "data": <protojson gRPC 响应>}`，data 内字段为 proto 的 JSON 名称，前端字段与 proto 定义一一对应
+- 失败：HTTP 状态行照常 4xx/5xx（仅作传输语义），`{"code": <业务错误码>, "message": <可展示信息>, "data": null}`，错误细节只写日志
+- 业务错误码 5 位 `HHNNN`（前三位 = HTTP 码，4 开头客户端错误、5 开头服务端错误），前端判别只看 `code`；网关自身错误用兜底码（HTTP 码×100，如 401→`40100`、429→`42900`）
+- 流式路由（文件下载 / SSE）不套信封，内容流直出
 
 | 方法 | 路径 | 认证 | 转发 RPC |
 |------|------|------|----------|

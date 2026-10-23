@@ -37,7 +37,7 @@ type cleanupRunner interface {
 	Run(ctx context.Context, refs []store.ObjectRef)
 }
 
-// Handler 实现 repositoryv1.RepositoryServiceServer（阶段一：知识库 + 整段上传）
+// Handler 实现 repositoryv1.RepositoryServiceServer（阶段一、二a：知识库 + 目录树 + 整段上传）
 type Handler struct {
 	repositoryv1.UnimplementedRepositoryServiceServer
 	st           *store.Store
@@ -57,7 +57,7 @@ func (h *Handler) CreateKnowledgeBase(ctx context.Context, req *repositoryv1.Cre
 	if !validRequiredUserXID(req.UserXid) {
 		return nil, errcode.InvalidArgument("user_xid 不是合法用户 xid")
 	}
-	name, err := validKnowledgeBaseName(req.Name)
+	name, err := validName(req.Name)
 	if err != nil {
 		return nil, err
 	}
@@ -134,7 +134,7 @@ func (h *Handler) UpdateKnowledgeBase(ctx context.Context, req *repositoryv1.Upd
 	if !validKnowledgeBaseXID(req.KbXid) {
 		return nil, errcode.InvalidArgument("kb_xid 不是合法知识库 xid")
 	}
-	name, err := validKnowledgeBaseName(req.Name)
+	name, err := validName(req.Name)
 	if err != nil {
 		return nil, err
 	}
@@ -201,7 +201,7 @@ func (h *Handler) UploadWhole(ctx context.Context, req *repositoryv1.UploadWhole
 	sum := sha256.Sum256(req.Data)
 	actual := hex.EncodeToString(sum[:])
 	if actual != declared {
-		return nil, errcode.New(codes.DataLoss, "sha256 校验失败")
+		return nil, errcode.New(50030, codes.DataLoss, "sha256 校验失败")
 	}
 
 	objectXID := eid.New(eid.Object)
@@ -272,12 +272,12 @@ func validKnowledgeBaseXID(s string) bool {
 	return eid.Match(s, eid.KnowledgeBase)
 }
 
-// validKnowledgeBaseName 去首尾空白并校验 1-100 字符
-func validKnowledgeBaseName(s string) (string, error) {
+// validName 去首尾空白并校验 1-100 字符（知识库名 / 目录名同规则）
+func validName(s string) (string, error) {
 	name := strings.TrimSpace(s)
 	n := utf8.RuneCountInString(name)
 	if n < 1 || n > knowledgeBaseNameMaxLen {
-		return "", errcode.InvalidArgument("知识库名称长度应为 1-100 字符")
+		return "", errcode.InvalidArgument("名称长度应为 1-100 字符")
 	}
 	return name, nil
 }

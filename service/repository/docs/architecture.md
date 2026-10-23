@@ -4,7 +4,7 @@
 
 Repository 服务是知识库、目录树、文章、附件的业务边界，也是**对象存储（Garage，S3 协议）的唯一直接访问方**。前端不接触 S3 凭证，Gateway 不持有 S3 凭证，二者都通过 Repository 完成文件的权限校验与读取授权。
 
-> **落地状态**：架构迁移已落地（2026-10-17）——File Store 已移除、`attachments.relative_path` 已随迁移 0006 落库、Garage 基础设施就绪（compose 编排、自动建桶与密钥、数据卷持久化）；接口协议已定（2026-10-18，[api/proto/repository/v1/repository.proto](../../../api/proto/repository/v1/repository.proto)）；**阶段一已实现（2026-10-18）：知识库 CRUD + `UploadWhole` + 删除走公共 `async_tasks` outbox**；目录树、文章、资源流式读取、分片上传随后续阶段落地。跟踪见 [docs/todo.md](../../../docs/todo.md)。
+> **落地状态**：架构迁移已落地（2026-10-17）——File Store 已移除、`attachments.relative_path` 已随迁移 0006 落库、Garage 基础设施就绪（compose 编排、自动建桶与密钥、数据卷持久化）；接口协议已定（2026-10-18，[api/proto/repository/v1/repository.proto](../../../api/proto/repository/v1/repository.proto)）；**阶段一已实现（2026-10-18）：知识库 CRUD + `UploadWhole` + 删除走公共 `async_tasks` outbox**；**阶段二a 已实现（2026-10-23）：目录树 5 RPC（级联删除子树 + 对象清理 outbox + `GetDirectoryTree` 平铺树）**；文章、资源流式读取、分片上传随后续阶段落地。跟踪见 [docs/todo.md](../../../docs/todo.md)。
 
 ## 对象存储与文件访问（P1 核心，架构迁移最高优先级）
 

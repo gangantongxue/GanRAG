@@ -52,7 +52,7 @@ const (
 )
 
 // ErrTaskNotFound 任务不存在（统一 NotFound）
-var ErrTaskNotFound = errcode.New(codes.NotFound, "任务不存在")
+var ErrTaskNotFound = errcode.New(40490, codes.NotFound, "任务不存在")
 
 // Task 任务行（生成模型别名，避免调用方再 import model 包）
 type Task = dbmodel.AsyncTask
