@@ -15,5 +15,5 @@
 ## 相关文档
 
 - [社交召回与权重标定](../../docs/social-recall.md)
-- [AI 服务多路召回与聚合审查](../ai/docs/architecture.md)
+- [AI 服务多路召回与聚合排序](../ai/docs/architecture.md)
 - [待完成事项](../../docs/todo.md)

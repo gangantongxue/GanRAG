@@ -37,3 +37,6 @@ go.work.sum
 bin/
 logs/
 data/
+
+# 融合数据集与融合方案细节（见 datasets/README.md，不入 git）
+datasets/

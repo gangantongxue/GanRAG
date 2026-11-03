@@ -17,17 +17,15 @@ Eino 是字节跳动的 AI 应用开发框架，用于构建基于大语言模�
 - 向量检索
 - 对话管理
 - 多智能体路由与切换（P1.5，见下节）
+- 语义精排与最终融合排序（P3，见「多路召回与聚合排序」）
 
 ## 多智能体架构（P1.5）
 
 > **落地状态：设计定稿，代码未实现**（P1.5）——实现后更新 docs/architecture.md「设计落地状态」。
 
-用户每条消息先经 **Decima-small** 做结构化判断，再交给选定的智能体执行。Decima-small 只负责有界决策，不负责生成最终回答。本项目使用它完成两类工作：
+用户每条消息先经 **Decima-small** 做结构化判断，再交给选定的智能体执行。Decima-small 只负责有界决策，不负责生成最终回答。本项目使用它完成**多智能体路由与切换**；召回链路的语义精排由 **Qwen3-Reranker-0.6B** 承担，不再使用 Decima 的 `noul` 做最终融合后的相关性审查。
 
-1. 多智能体路由与切换；
-2. 向量召回与关键词召回合并后的候选相关性审查。
-
-社交关系感知的召回重排由 [social-graph 服务](../../social-graph/docs/architecture.md) 提供社交信号，Decima 不承担社交打分；见本文「多路召回与聚合审查（P3）」。
+社交关系感知的召回排序由 [social-graph 服务](../../social-graph/docs/architecture.md) 提供社交信号，Decima 不承担社交打分；见本文「多路召回与聚合排序（P3）」。
 
 ### 决策模型：Decima-small
 
@@ -36,7 +34,7 @@ Eino 是字节跳动的 AI 应用开发框架，用于构建基于大语言模�
 - 122M 参数，int8 ONNX，可在本地 CPU 运行；
 - 通过 `pip` 安装官方 Python 包和启动模块；
 - Go AI 服务通过 HTTP 调用本地服务，不在 Go 进程内嵌 Python/ONNX 运行时；
-- 所有模型概率只作为决策信号，最终是否切换 Agent 或提升文档排名由 AI 服务代码执行。
+- 所有模型概率只作为决策信号，最终是否切换 Agent 由 AI 服务代码执行；文档排名由 Qwen3-Reranker-0.6B 的语义分与融合公式决定。
 
 官方本地启动方式：
 
@@ -45,9 +43,9 @@ pip install decima-ai
 python -m decima.serve --model amyrmahdy/decima-small --port 11436
 ```
 
-HTTP 地址为 `http://127.0.0.1:11436/v1/systemone`。请求使用 System One 的 `state + questions` 格式；Agent 路由使用 `choice`，候选文档审查使用 `noul`。
+HTTP 地址为 `http://127.0.0.1:11436/v1/systemone`。请求使用 System One 的 `state + questions` 格式；Agent 路由使用 `choice`；`noul` 不再用于召回候选审查。
 
-**使用边界**：Decima-small 不生成聊天文本、不替代底层 LLM、不绕过权限过滤，也不直接决定数据库写入、工具调用等副作用操作。
+**使用边界**：Decima-small 不生成聊天文本、不替代底层 LLM、不绕过权限过滤，也不直接决定数据库写入、工具调用等副作用操作；召回语义精排由 Qwen3-Reranker-0.6B 负责。
 
 ### 智能体注册表
 
@@ -156,11 +154,11 @@ AI 服务持有**当前向量化模型**配置（稳定 id + 版本，如 `bge-m
 - **检索路由**：查询向量用当前模型编码，**只查当前模型后缀的集合**——用什么模型，就检索对应的向量化结果，切换模型不影响旧向量的可用性
 - **切换模型**：新写入切新模型集合 → 按 `content_key` 全量重建（不重跑 markitdown）→ 重建完成前旧集合继续服务 → 原子切换配置、下线旧集合（保留期可回滚）
 
-## 多路召回与聚合审查（P3）
+## 多路召回与聚合排序（P3）
 
 > **落地状态：设计定稿，代码未实现**（P3）——实现后更新根 `docs/architecture.md`「设计落地状态」。
 >
-> 召回总纲、关系建模与公开数据集标定方法见 [docs/social-recall.md](../../../docs/social-recall.md)；社交图服务见 [service/social-graph/docs/architecture.md](../../social-graph/docs/architecture.md)。
+> 召回总纲、关系建模、公开数据集标定与离线调参方法见 [docs/social-recall.md](../../../docs/social-recall.md)；社交图服务见 [service/social-graph/docs/architecture.md](../../social-graph/docs/architecture.md)。
 >
 > 本节只定义 AI 服务的消费方式。所有融合权重均为配置项，文档只给序关系与来源，不固化数值。
 
@@ -168,17 +166,18 @@ AI 服务持有**当前向量化模型**配置（稳定 id + 版本，如 `bge-m
 
 ```text
 权限硬过滤
-→ 向量召回 + 关键词召回
-→ 合并去重 → 排名归一化或 RRF
-→ 时效乘性衰减
-→ star / 社交加性融合
-→ 取 Top-K → Decima-small 相关性审查
-→ 最终排序
+→ 向量召回 Top-Nv + 关键词召回 Top-Nk
+→ 合并去重 → 语义路融合（排名归一化或 RRF）
+→ 【可选】Qwen3-Reranker-0.6B → rerankScore → 排名化/分位数化
+→ semanticScore
+→ base = semanticScore × timeDecay
+→ final = base + w_star × starScore + w_social × socialScore
+→ 取 Top-K → 最终排序
 ```
 
-权限过滤必须先于两条召回链路：私有库排除非成员，公开库允许所有人。未授权文档不得进入候选集，也不得发送给 Decima-small。
+权限过滤必须先于两条召回链路：私有库排除非成员，公开库允许所有人。未授权文档不得进入候选集，也不得发送给 Qwen3-Reranker。
 
-### 双路召回与基础融合
+### 语义路召回与融合
 
 向量链路和关键词链路分别取 `Top-Nv` / `Top-Nk`，按文档块 ID 合并去重。两条链路的原始分数不直接相加，统一使用排名归一化或 RRF：
 
@@ -193,7 +192,28 @@ RRF：     R(d) = Σ 1 / (k + rank_i(d))
 
 - 未被某条链路命中的文档，该链路得分为 `0`；
 - `w_v` / `w_k` / `w_both` / `k` 均为配置或待标定超参；
-- 社交分分布不均时优先用 RRF 兜底，避免量纲主导。
+- 社交分分布不均时优先用 RRF 兜底，避免量纲主导；
+- 可选把 Decima `noul` 作为语义路第三路排序信号（默认关闭），只参与 `R(d)`，不进入最终加性融合。
+
+### Qwen3-Reranker-0.6B 语义精排
+
+在语义路融合之后、时效/star/社交融合之前，可选调用 Qwen3-Reranker-0.6B：
+
+```text
+rerankScore   = Qwen3Reranker(query, candidate_docs)
+semanticScore = rankNormalize(rerankScore)   // 候选集内排名化/分位数化
+base          = semanticScore × timeDecay
+final         = base + w_star × starScore + w_social × socialScore
+```
+
+- 只作用于语义召回之后、最终融合之前；输出只作为 `semanticScore` 的增强或替代；
+- **禁止**在 `final` 之后再做全局 rerank 并直接取 Top-K；
+- `rerankScore` 不校准，不能与 star/社交原始分直接加性融合，必须先做候选集内排名化/分位数化；
+- 选型 `Qwen3-Reranker-0.6B`：FP16 约 1.2GB，8GB 显存可在线；与 `Qwen3-Embedding-0.6B` 同族；4B 不在本项目采用；
+- 推理服务独立于现有 Ollama 向量链路（Transformers/vLLM/llama.cpp 待实现时评估）；离线质检可先用 Python 脚本；
+- 在线精排需实测 P95 延迟与吞吐；默认可先离线质检，在线开关由配置控制；
+- 不可用/超时：回落到语义路融合结果；Decima `noul` 可选作语义路第三路排序器（默认关闭），不得放到最终融合后；
+- 该分数不直接驱动调参决策。
 
 ### 时效衰减（乘性）
 
@@ -202,7 +222,7 @@ RRF：     R(d) = Σ 1 / (k + rank_i(d))
 ```text
 ageDays   = now - freshnessAt(article)
 timeDecay = max(pow(0.5, ageDays / halfLife), decayFloor)
-B(d)      = R(d) × timeDecay(d)
+base(d)   = semanticScore(d) × timeDecay(d)
 ```
 
 - `freshnessAt` 优先取 `articles.updated_at`（最后修改），回退 `created_at`（发布）；
@@ -261,17 +281,15 @@ self_authored / own_kb
 - PageRank、Leiden、Jaccard、二跳的系数均为待标定超参；Node2Vec 是并列对比项，不与图分数简单叠加；
 - 社交图服务不可用或 profile 未命中时，`socialScore` 置 0 或回退旧五档规则（配置），不得绕过权限。
 
-### Decima-small 相关性审查
-
-对融合排序后的 Top-K 候选调用 Decima-small 的 `noul` 问题，判断「该文档是否直接有助于回答当前用户问题」，得到 `audit(d) ∈ [0,1]`：
+### 最终融合公式
 
 ```text
-S_pre(d)   = B(d) + w_star × starScore(kb(d)) + w_social × socialScore(u, d)
-S_final(d) = S_pre(d) + w_audit × audit(d)
+base(d)  = semanticScore(d) × timeDecay(d)
+final(d) = base(d) + w_star × starScore(kb(d)) + w_social × socialScore(u, d)
 ```
 
-- Decima-small 只提供相关性信号，不能绕过权限、替代两条召回链路或单独决定最终结果；
-- `w_audit` 是独立配置项，与社交/star 权重分开标定；
+- 原 `w_audit`（Decima 后置审查权重）已退出主公式；Decima `noul` 如保留，只作为语义路可选排序器（默认关闭），不得放到最终融合后；
+- 最终排序只由 `semanticScore`、`timeDecay`、`starScore`、`socialScore` 决定；
 - Top-K 的 `K` 是工程配置，不是权重。
 
 ### 候选元数据契约
@@ -290,30 +308,37 @@ AI 服务在向量写入/检索时需要拿到以下字段（不可变字段可�
 
 | 配置 | 说明 | 来源 |
 |---|---|---|
-| `w_v` / `w_k` / `w_both` 或 `alpha` | 语义、关键词、双路命中的融合比例 | T2Ranking / DuReader_retrieval |
-| `w_star` | star 热度融合权重 | 第一层联合校准 |
-| `w_social` | 社交分数融合权重 | 第一层联合校准 |
-| `w_audit` | Decima 审查分权重 | Top-K 复核实验 |
-| `time_half_life` | 时效半衰期 | ChronoQA |
+| `w_v` / `w_k` / `w_both` 或 `alpha` | 语义、关键词、双路命中的融合比例 | 语义基线与联合校准 |
+| `w_star` | star 热度融合权重 | 分部一阶社交标定 + 两层统一测试集联合校准 |
+| `w_social` | 社交分数融合权重 | 同上 |
+| `time_half_life` | 时效半衰期 | ChronoQA 单独校准 + 联合校准 |
 | `time_decay_floor` | 衰减下限（结构性常数） | 不参与调优 |
 | `star_p95` | 知识库 star P95（统计参数） | 数据分布统计，定期刷新 |
-| 关系档位分值 | 各档位的相对分值 | Dianping/Douban + 合成变体 |
-| `pagerank_bonus` / `community_bonus` / `jaccard_bonus` | 结构加成系数 | 第二层消融 |
+| 关系档位分值 | 各档位的相对分值 | 一阶社交数据 + 合成变体 |
+| `pagerank_bonus` / `community_bonus` / `jaccard_bonus` | 结构加成系数 | 合成社交层消融 |
+| `rerank_enabled` | 是否启用语义精排 | 工程配置；先离线质检，在线按 P95 延迟评估 |
+| `rerank_model` | 精排模型 | `Qwen3-Reranker-0.6B` |
+| `rerank_top_n` | 精排候选规模 | 工程配置 |
+| `rerank_timeout` | 精排超时 | 工程配置；失败回落 |
+| `semantic_norm_mode` | 精排分数排名化/分位数化 | 结构性处理 |
+| `decima_noul_fallback_enabled` | Decima `noul` 是否作为语义路可选排序器 | 默认 `false`；降级/消融 |
 | `social_fallback_mode` | `zero` 或 `legacy_tier` | 工程配置 |
-| `top_nv` / `top_nk` / `top_k_audit` | 候选规模 | 工程配置 |
+| `top_nv` / `top_nk` / `top_k` | 候选规模 | 工程配置 |
 
 ### 可解释与消融
 
-每个候选保留 `vector_rank`、`keyword_rank`、`V`、`K`、`timeDecay`、`starScore`、`socialScore` 的各分项、`audit`、`final_score`，支持：
+每个候选保留 `vector_rank`、`keyword_rank`、`V`、`K`、`rerank_score`、`semantic_score`、`timeDecay`、`starScore`、`socialScore` 的各分项与 `final_score`，支持：
 
 - 解释排名：为什么这篇排前面；
-- 网格调参/贝叶斯优化；
-- 消融实验：去掉关键词、社交、时间、star 或 Decima 审查，分别评估 Recall@K、MRR、nDCG@K；
+- 粗到细网格/贝叶斯调参；
+- 消融实验：去掉关键词、语义精排、社交、时间或 star，分别评估 Recall@K、MRR、nDCG@K；
+- 语义精排对照：无重排 / Decima `noul` / Qwen3-Reranker-0.6B，额外记录 P95 延迟；
 - 分社交密度报告稳定性，避免只在一个模拟分布上取最优。
 
 ### 边界
 
 - 社交信号只作用于**已授权候选**；
 - star/社交/时效只做排序，不影响权限；
-- Decima 不直接决定数据库写入、工具调用等副作用操作；
-- 公开数据集调出的权重只是上线初值，最终以真实日志/A/B 测试微调。
+- Decima 只负责 Agent 选择，不直接决定数据库写入、工具调用等副作用操作；
+- Qwen3-Reranker-0.6B 只做语义精排，不决定最终排序；Qwen3.5-4B 只离线评分，不进入在线最终决策链路；
+- 融合数据集调出的权重只是上线初值，最终以真实日志/A/B 测试微调。

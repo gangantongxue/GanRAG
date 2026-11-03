@@ -2,11 +2,11 @@
 
 ## 概述
 
-本文档是四库 **12 张表**的**结构参考**（完整 SQL + 字段 + 索引 + 口径），是编写迁移与代码的直接依据。设计决策与推导见 [data-model.md](data-model.md)；规范（外键 / XID / Redis Key / 内容存储口径）见根 [AGENTS.md](../AGENTS.md)；实施跟踪见 [fix.md](fix.md) / [todo.md](todo.md)。
+本文档是四库 **现役 12 张表 + 规划 1 张表（`user_e2ee`，未迁移）** 的**结构参考**（完整 SQL + 字段 + 索引 + 口径），是编写迁移与代码的直接依据。设计决策与推导见 [data-model.md](data-model.md)；规范（外键 / XID / Redis Key / 内容存储口径）见根 [AGENTS.md](../AGENTS.md)；实施跟踪见 [fix.md](fix.md) / [todo.md](todo.md)。
 
 | Schema | 拥有者 | 表 | 迁移位置 |
 |--------|--------|----|----------|
-| `ganrag_user` | User 服务 | users、sessions、user_follows | `pkg/db/migrations/ganrag_user/`（0001-0005） |
+| `ganrag_user` | User 服务 | users、sessions、user_follows（规划：user_e2ee） | `pkg/db/migrations/ganrag_user/`（0001-0005） |
 | `ganrag_repository` | Repository 服务 | knowledge_bases、directories、articles、attachments、kb_user_relations | `pkg/db/migrations/ganrag_repository/`（0001-0008） |
 | `ganrag_ai` | AI 服务 | chat_sessions、chat_messages、chat_message_parts | `pkg/db/migrations/ganrag_ai/`（0001-0005） |
 | `ganrag_common` | 共享基础设施（经 `pkg/asynctask`） | async_tasks | `pkg/db/migrations/ganrag_common/`（0001） |
@@ -49,7 +49,7 @@ CREATE TABLE users (
 | xid | VARCHAR(32) | 对外业务主键（<前缀>_<xid>，pkg/eid） |
 | email | VARCHAR(254) | 登录标识，唯一；注册/找回密码走邮箱验证码 |
 | username | VARCHAR(64) | 展示名，可重复、可不填，无唯一约束 |
-| password_hash | VARCHAR(100) | bcrypt（实际 60 字符，留余量） |
+| password_hash | VARCHAR(100) | bcrypt（现役；OPAQUE 改造后移除，见 [e2ee.md](e2ee.md) `FIX-027`） |
 | status | TINYINT | 1 正常 / 0 禁用（禁用后登录与 refresh 拒绝） |
 | created_at / updated_at | DATETIME | 自动维护 |
 
@@ -58,6 +58,62 @@ CREATE TABLE users (
 | PRIMARY | id | 主键（内部） |
 | uk_users_xid | (xid) | 对外标识唯一 |
 | uk_users_email | (email) | 登录点查、注册查重 |
+
+## user_e2ee E2EE 密钥材料（规划，未迁移）
+
+> OPAQUE 认证改造的目标表，随 `0006+` 迁移新增；当前库中不存在，不能直接 `task db-gen`。设计见 [e2ee.md](e2ee.md)。
+
+```sql
+CREATE TABLE user_e2ee (
+  id                     BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  user_id                BIGINT UNSIGNED NOT NULL,       -- 逻辑引用 users.id（同服务）
+  user_xid               VARCHAR(32)     NOT NULL,       -- users.xid 全串（同服务冗余）
+  credential_id          VARCHAR(64)     NOT NULL,       -- OPAQUE credential_identifier（= user_xid）
+  opaque_suite           VARCHAR(32)     NOT NULL,       -- 如 ristretto255-SHA512
+  opaque_record          VARBINARY(512)  NOT NULL,       -- RFC 9807 RegistrationRecord 序列化
+  key_bundle_version     SMALLINT UNSIGNED NOT NULL,
+  key_bundle_nonce       VARBINARY(12)   NOT NULL,       -- AES-GCM nonce
+  key_bundle             VARBINARY(512)  NOT NULL,       -- export_key 派生 KEK 加密的 Ed25519/X25519 私钥包
+  recovery_version       SMALLINT UNSIGNED NOT NULL,
+  recovery_salt          VARBINARY(16)   NOT NULL,
+  recovery_nonce         VARBINARY(12)   NOT NULL,
+  recovery_bundle        VARBINARY(512)  NOT NULL,       -- 恢复码派生 KEK 加密的同一 key bundle
+  ed25519_public_key     VARBINARY(32)   NOT NULL,
+  x25519_public_key      VARBINARY(32)   NOT NULL,
+  created_at             DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at             DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  UNIQUE KEY uk_user_e2ee_user (user_id),
+  UNIQUE KEY uk_user_e2ee_credential (credential_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+```
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| id | BIGINT UNSIGNED | 自增主键，仅内部使用 |
+| user_id | BIGINT UNSIGNED | 逻辑引用 `users.id`（同服务） |
+| user_xid | VARCHAR(32) | 用户 `usr_<xid>` 全串（同服务冗余） |
+| credential_id | VARCHAR(64) | OPAQUE `credential_identifier`，当前等于 `user_xid`；用于派生每用户 OPRF 密钥 |
+| opaque_suite | VARCHAR(32) | OPAQUE ciphersuite 标识，客户端/服务端必须一致 |
+| opaque_record | VARBINARY(512) | RFC 9807 `RegistrationRecord` 序列化（`client_public_key` + `masking_key` + `Envelope`） |
+| key_bundle_version | SMALLINT UNSIGNED | key bundle 明文格式版本，参与 AAD |
+| key_bundle_nonce | VARBINARY(12) | AES-256-GCM nonce，每次改密/重置重新生成 |
+| key_bundle | VARBINARY(512) | `export_key` 派生 KEK 加密的 Ed25519/X25519 私钥包；服务端不可解密 |
+| recovery_version | SMALLINT UNSIGNED | 恢复码包装格式版本，参与 AAD |
+| recovery_salt | VARBINARY(16) | 恢复码 HKDF salt，随机生成 |
+| recovery_nonce | VARBINARY(12) | 恢复码 AEAD nonce |
+| recovery_bundle | VARBINARY(512) | 恢复码派生 KEK 加密的同一 key bundle；服务端不可解密 |
+| ed25519_public_key | VARBINARY(32) | 长期签名公钥（聊天身份） |
+| x25519_public_key | VARBINARY(32) | 长期协商公钥（聊天身份） |
+| created_at / updated_at | DATETIME | 自动维护 |
+
+| 索引 | 列 | 用途 |
+|------|----|------|
+| PRIMARY | id | 主键（内部） |
+| uk_user_e2ee_user | (user_id) | 每用户一行、登录点查 |
+| uk_user_e2ee_credential | (credential_id) | OPAQUE 凭证标识唯一、防重复注册 |
+
+语义：每用户一行；改密/重置原地替换 `opaque_record` / `key_bundle*` / `recovery_*`，不保留密钥历史；恢复码默认强制生成（若允许跳过，`recovery_*` 改 NULL 并在 UI 警告）；公钥由 User 服务提供给聊天对端，客户端解密 key bundle 后必须校验公钥一致。该表不对外展示，不设业务主键 `xid`，以 `user_id` / `user_xid` 定位。
 
 ## sessions 登录会话
 
@@ -270,9 +326,9 @@ CREATE TABLE articles (
 | content_key | VARCHAR(500) | 正文 md 对象 key（统一 `o/<obj_xid>`） |
 | content_object_xid | VARCHAR(32) | 正文对象 obj_<xid>（对象引用，不解析 key） |
 | created_by_xid | VARCHAR(32) | 创建者 usr_<xid> 全串（跨服务逻辑引用） |
-| created_at / updated_at | DATETIME | 自动维护；`created_at` 视为发布时间，`updated_at` 作为最后修改/新鲜度 |
+| created_at / updated_at | DATETIME | 自动维护；时效基准 = `updated_at`（最后修改），无最后修改时间时 `created_at` 兜底 |
 
-- 无 `published_at` 字段：时效衰减优先用 `updated_at`，回退 `created_at`；如后续需要区分正文更新与元数据编辑，再加 `content_updated_at`。
+- 无 `published_at` 字段：时效性判断基准 = `updated_at`（最后修改时间），刚创建、无最后修改时间时用 `created_at` 兜底（建表时两值相同，兜底天然成立）；如后续需要区分正文更新与元数据编辑，再加 `content_updated_at`。
 - `created_by_xid` 是文章作者信号；KB 成员关系中的协作者由 `kb_user_relations.role >= 1` 表达。
 
 | 索引 | 列 | 用途 |
@@ -597,7 +653,7 @@ CREATE TABLE async_tasks (
 | 关注知识库 `starred_kb` | `kb_user_relations.starred = 1` | **star 即关注该库**，不另建表 |
 | star 作者 `starred_author` | `kb_user_relations.starred` + `knowledge_bases.owner_xid` | 按作者聚合的弱兴趣信号 |
 | 文章作者 `self_authored` / 作者关系 | `articles.created_by_xid` | 文章级作者信号 |
-| 时效 | `articles.created_at` / `updated_at` | 发布时间 / 最后修改 |
+| 时效 | `articles.updated_at`（无则 `created_at`） | 时效衰减唯一时间基准（最后修改时间，创建时间兜底） |
 | star 热度 | `knowledge_bases.star_count` | 知识库级；文章继承 |
 
 - 社交图服务通过 User/Repository 的内部分页导出 RPC 拉取，不跨 schema JOIN；

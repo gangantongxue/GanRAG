@@ -9,7 +9,8 @@ RAG（检索增强生成）是实现「基于用户自己的知识回答问题�
 - 产品形态与功能分期：[docs/product.md](docs/product.md)
 - 数据模型（全部业务表）：[docs/data-model.md](docs/data-model.md)
 - 总体架构与技术选型：[docs/architecture.md](docs/architecture.md)
-- 社交关系感知召回与权重标定：[docs/social-recall.md](docs/social-recall.md)
+- 社交关系感知召回、语义精排与权重标定：[docs/social-recall.md](docs/social-recall.md)
+- 端到端加密（OPAQUE/aPAKE）方案：[docs/e2ee.md](docs/e2ee.md)
 
 ## 目录结构
 

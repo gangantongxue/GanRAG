@@ -10,11 +10,21 @@ version: '3'
 #   task run                       后台启动所有已实现服务
 #   task run -- vector-store       前台启动指定服务
 #   task stop                      停止所有服务容器
+#   task ds-check                  数据集融合脚本自检（假数据 + mock 模型）
+#   task ds-smoke                  数据集融合真模型冒烟（ds-run 前必过）
+#   task ds-run                    数据集融合闭环：开始/续跑（ROUNDS=10 分批）
+#   task ds-status                 查看数据集融合调参进度
+#   task ds-archive-v1             v1 核心产物归档（一次性；之后版本自动隔离）
+#   task ds-embed                  BM25 + 向量 + 精确 top-K（长任务，可分批/续跑）
+#   task ds-build-tuning           构建 neutral/joint 调参数据
+#   task ds-tune                   联合扫描召回参数（NDCG@10 / Recall@20）
 
 # 服务列表：自动发现 service/<name>/Taskfile.yml 并按名称排序
 vars:
   SERVICES:
     sh: find service -mindepth 2 -maxdepth 2 -name Taskfile.yml -exec dirname {} \; | xargs -n1 basename | sort
+  # 数据集融合每批次轮数（task ds-run ROUNDS=5 覆盖；命令行变量优先于此处默认值）
+  ROUNDS: "10"
 
 tasks:
   default:
@@ -113,3 +123,70 @@ tasks:
     desc: 同步迁移后用 gorm gen 生成模型与查询代码（pkg/db/model、pkg/db/query）
     cmds:
       - go run ./pkg/db/gen
+
+  # ---- 数据集融合（datasets/，不入 git；细节见 datasets/README.md）----
+
+  ds-check:
+    desc: 数据集融合脚本自检（假数据 + mock 模型，秒级；含抽查回答解析契约测试）
+    cmds:
+      - python3 datasets/scripts/run.py --check
+
+  ds-smoke:
+    desc: 数据集融合真模型冒烟（小骨架 2 轮），验证 Ollama 链路/解析/落盘/续跑，ds-run 前必过
+    cmds:
+      - python3 datasets/scripts/run.py --smoke
+
+  ds-run:
+    desc: 数据集融合闭环：开始/续跑，分批执行（task ds-run ROUNDS=5 [-- --allow-script-change]）
+    cmds:
+      - python3 datasets/scripts/run.py --rounds {{.ROUNDS}} {{.CLI_ARGS}}
+
+  ds-materialize:
+    desc: 用最优参数物化全量候选记录集（processed/<版本>/candidates.jsonl，收敛后执行）
+    cmds:
+      - python3 datasets/scripts/run.py --materialize
+
+  ds-status:
+    desc: 查看数据集融合调参进度（累计轮数/当前参数/区间结论），不执行
+    cmds:
+      - python3 datasets/scripts/run.py --status
+
+  ds-archive-v1:
+    desc: v1 核心产物归档到 datasets/archive/v1/（一次性；之后 v2/v3 自动版本隔离）
+    cmds:
+      - python3 datasets/scripts/run.py --archive-v1 {{.CLI_ARGS}}
+
+  ds-embed:
+    desc: BM25 过滤 + Qwen3-Embedding + 精确 top-K（长任务，可中断续跑；小样验证 task ds-embed -- --limit 1000）
+    cmds:
+      - python3 datasets/scripts/embed.py --all {{.CLI_ARGS}}
+
+  ds-embed-bm25:
+    desc: 只过滤 T2Ranking BM25 到选中 query 的 top-K
+    cmds:
+      - python3 datasets/scripts/embed.py --bm25 {{.CLI_ARGS}}
+
+  ds-embed-collection:
+    desc: 只向量化 collection（可中断续跑）
+    cmds:
+      - python3 datasets/scripts/embed.py --collection {{.CLI_ARGS}}
+
+  ds-embed-queries:
+    desc: 只向量化选中 query
+    cmds:
+      - python3 datasets/scripts/embed.py --queries {{.CLI_ARGS}}
+
+  ds-embed-search:
+    desc: 只做向量精确 top-K 检索
+    cmds:
+      - python3 datasets/scripts/embed.py --search {{.CLI_ARGS}}
+
+  ds-build-tuning:
+    desc: 构建 neutral/joint 两层调参数据（processed/<版本>/tuning.jsonl）
+    cmds:
+      - python3 datasets/scripts/build_tuning.py {{.CLI_ARGS}}
+
+  ds-tune:
+    desc: 联合扫描召回参数（NDCG@10/Recall@20；task ds-tune -- --layer joint --max-queries 3000）
+    cmds:
+      - python3 datasets/scripts/tune.py {{.CLI_ARGS}}

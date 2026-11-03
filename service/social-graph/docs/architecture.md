@@ -2,9 +2,9 @@
 
 > **落地状态：设计定稿，代码未实现**（P3）——实现后更新根 [docs/architecture.md](../../../docs/architecture.md)「设计落地状态」与 [docs/todo.md](../../../docs/todo.md)。
 >
-> **定位**：为 AI 服务提供「用户 × 文章」的社交关系信号。社交召回总纲见 [docs/social-recall.md](../../../docs/social-recall.md)；AI 消费端见 [service/ai/docs/architecture.md](../../ai/docs/architecture.md)「多路召回与聚合审查」。
+> **定位**：为 AI 服务提供「用户 × 文章」的社交关系信号。社交召回总纲见 [docs/social-recall.md](../../../docs/social-recall.md)；AI 消费端见 [service/ai/docs/architecture.md](../../ai/docs/architecture.md)「多路召回与聚合排序」。
 >
-> **权重纪律**：本服务只产出关系档位与结构信号，不持有融合权重；`w_social` / `w_star` / `w_audit` 等由 AI 服务配置与数据集实验标定。
+> **权重纪律**：本服务只产出关系档位与结构信号，不持有融合权重；`w_social` / `w_star` 等由 AI 服务配置与数据集实验标定。
 
 ## 概述
 
@@ -32,7 +32,7 @@
 - **不做最终排序**：融合权重、排序公式由 AI 服务持有；
 - **不存业务事实**：关注/star/成员关系的事实来源仍是 User/Repository；本服务只存派生快照；
 - **不做文章级 star**：当前 star 是知识库级，文章热度继承所属 KB；
-- **不生成聊天文本、不调用 LLM/Decima**。
+- **不生成聊天文本、不调用 LLM/Decima/Qwen3-Reranker**。
 
 ## 为什么独立服务
 

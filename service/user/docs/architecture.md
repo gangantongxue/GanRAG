@@ -20,11 +20,13 @@
 
 ### 密码存储
 
-**选型：bcrypt（golang.org/x/crypto/bcrypt）**
+**选型：bcrypt（golang.org/x/crypto/bcrypt）** —— 现役实现
 
 - 加盐哈希：天然抗彩虹表
 - 内置 cost：计算可控（默认 10）
 - 行业标准：无需自管密钥与迭代参数
+
+> **E2EE 目标态（定稿未实现）**：认证改为 OPAQUE（RFC 9807），服务器不再接收明文密码、不再保存密码哈希；`password_hash` 最终移除。目标设计见 [docs/e2ee.md](../../../docs/e2ee.md)，迁移跟踪见 [docs/fix.md](../../../docs/fix.md) `FIX-027`。本节其余描述仍针对现役 bcrypt 实现。
 
 ### Token 方案
 
@@ -50,6 +52,7 @@
 - 修改密码（校验旧密码，成功后吊销该用户全部会话）
 - 找回密码（邮箱验证码重置，成功后吊销该用户全部会话）——「忘记密码接口」
 - 登录设备管理（设备列表 / 踢设备下线）——「登录设备管理接口」
+- E2EE 密钥材料托管与 OPAQUE 认证（规划，见 [docs/e2ee.md](../../../docs/e2ee.md)）——现役未实现
 
 **明确不做**（YAGNI，需求出现再加）：
 
@@ -90,10 +93,43 @@ Gateway ──本地验签（共享密钥）──▶ 通过则转发，用户 x
 - access token 中携带 `sub`（用户 xid 全串）与 `username`（展示名）；Gateway 解析后将用户 xid 透传给下游服务
 - 用户禁用（`status=0`）后，refresh 与新登录均拒绝；access 在其自然过期前仍可通过验签（15 分钟窗口可接受）
 
+## 端到端加密认证演进（定稿未实现）
+
+> 目标态设计见 [docs/e2ee.md](../../../docs/e2ee.md)；本节只列对 User 服务的影响。**现役代码仍为 bcrypt + 单轮 Login，以下为改造目标，未实现。**
+
+### 目标流程
+
+| 流程 | 目标态 |
+|------|--------|
+| 注册 | 邮箱验证码 → OPAQUE 注册两轮（`RegistrationRequest` / `RegistrationResponse` / `Finalize`）→ 上传 `RegistrationRecord` + `export_key` 加密的 key bundle + 恢复码加密的 recovery bundle + 公钥 → 写 `user_e2ee` |
+| 登录 | OPAQUE `KE1` → 服务端 `KE2`（未知用户返回伪记录防枚举）→ 客户端 `KE3` → 服务端 `ServerFinish` → 签发现有 access/refresh token，返回 key bundle 密文 |
+| 改密 | 旧密码登录恢复 key bundle → 新密码重新 OPAQUE 注册 → 重加密同一 key bundle → 原子替换 `user_e2ee` → 吊销全部 sessions |
+| 重置 | 邮箱验证码 + 恢复码解密 recovery bundle → Ed25519 挑战签名证明持有旧 key bundle → 新密码重新注册 → 替换 `user_e2ee` → 吊销全部 sessions；无恢复码则明确警告历史私聊不可解密 |
+
+### 影响
+
+- **表**：新增 `user_e2ee`（规划，见 [docs/database.md](../../../docs/database.md)）；`users.password_hash` 过渡期保留可空、迁移完成后删除；`sessions` / 双 token 模型不变。
+- **接口**：`Register` / `Login` / `UpdatePassword` / `ResetPassword` 改为多轮 OPAQUE 消息（KE1/KE2/KE3、RegistrationRequest/Response/Record），Gateway 增加多轮 auth 路由；具体 proto 在实施时定。
+- **Redis**：OPAQUE 登录短态 `user:opaque_login:<login_id>`（TTL 约 2 分钟、一次性）；恢复码挑战 `user:e2ee_recovery:<user_xid>`（TTL 5 分钟、一次性）；邮箱验证码沿用现 key 规范。
+- **服务端秘密**：`oprf_seed` 与 OPAQUE `server_private_key` 放配置/密钥管理，不入库；两者轮换均要求用户重新注册（Envelope 绑定服务端公钥）。
+- **限流/防枚举**：登录 start/finish 走 auth 限流桶；不存在邮箱返回伪 KE2；错误密码统一 `Unauthenticated`。
+- **职责变化**：由「校验密码哈希」改为「运行 OPAQUE 协议 + 托管密文密钥材料」；不新增独立认证服务。
+- **威胁模型 A**：服务器可能被入侵/好奇，但不主动修改客户端代码；服务端重置账号密码不能解密旧 key bundle（新 `export_key` ≠ 旧），但弱密码可被离线字典攻击（OPAQUE 固有限制），需强密码策略 + Argon2id。详见 [docs/e2ee.md](../../../docs/e2ee.md) §2.4。
+
+### 明确不做
+
+- 不用挑战签名替代 OPAQUE AKE（恢复码重置中的 Ed25519 持有证明除外，它不参与登录认证）；
+- 不自研 OPRF、盲化、KDF 组合或 ciphersuite；
+- 不在 User 服务保存明文密码、`export_key`、私钥、恢复码；
+- 不把 AI 聊天/RAG 纳入 E2EE（服务端必须读取明文）；
+- 不承诺防御服务端下发恶意前端（威胁模型 A 明确不防这一层；需要可信客户端另行设计）。
+
 ## 接口设计
 
 Proto 文件位置：`api/proto/user/v1/user.proto`（生成代码到 `api/gen/user/v1`，修改后执行 `task proto`）。
 服务名草案中的 `service User` 与 `message User` 同名（proto3 禁止），已定为 `service UserService`。
+
+> 下列 proto 草案为**现役/过渡期接口**（bcrypt 单轮登录）；E2EE 目标态将改为多轮 OPAQUE 消息（`RegistrationRequest/Response/Record`、`KE1/KE2/KE3`），见上文「端到端加密认证演进」与 [docs/e2ee.md](../../../docs/e2ee.md)。
 
 ### Proto 草案
 
@@ -275,7 +311,7 @@ CREATE TABLE sessions (
 - **设备 ID 下发（方案 A）**：`device_id` 服务端生成/核对（取值优先级：请求体 > Gateway `did` cookie > 服务端生成 `dev_<xid>`（`pkg/eid`））；Gateway 登录成功后 `Set-Cookie: did=<device_id>`（HttpOnly，Max-Age 1 年，每次登录续期），登录响应 `device_id` 回填供前端存 localStorage；完整口径见 [docs/data-model.md](../../../docs/data-model.md)「设备标识（device_id）口径」
 - **refresh 轮换**：原地更新 `token_hash` 与 `last_active_at`；**不做重用检测**，旧 token 复用按无效拒绝（`ErrRefreshNotFound` → `Unauthenticated`）
 - **过期清理**：登录 / 刷新时顺带删除该用户已过期 `sessions` 行（惰性清理，无需定时任务）
-- **改密 / 找回密码**：单事务内更新 `users.password_hash` + 删除该用户全部 `sessions` 行
+- **改密 / 找回密码（现役）**：单事务内更新 `users.password_hash` + 删除该用户全部 `sessions` 行；E2EE 目标态改为替换 `user_e2ee` + 恢复码重置，见「端到端加密认证演进」
 - **踢设备 / 登出**：置 `revoked_at`（行保留供列表展示）；设备列表默认只返回在线行
 - **邮箱验证码**：存 Redis（不建表），key `user:email_code:<scene>:<email>`（scene：`register` / `reset_password`），value 为验证码 SHA-256 哈希，TTL 5 分钟；验证成功即 DEL、失败 5 次作废（辅助计数键 `user:email_code_tries:<scene>:<email>`）；发送限频 `user:email_code_limit:<email>`（TTL 60s，不分场景）
 
@@ -387,3 +423,4 @@ service/user/
 > **待实施（本文档已按新设计更新）**：邮箱登录标识 + sessions 会话模型 + 找回密码 + 设备管理。
 > Redis 邮箱验证码 + 邮件发送通道已实现（2026-10-17：`pkg/redis` 连接包、`internal/auth/emailcode.go` / `mailer.go`、`SendEmailCode` RPC 与网关 `POST /api/v1/auth/email-code`；SMTP 未配置时验证码降级写日志，仅限本地开发）。
 > 建表迁移已交付（2026-10-15 基线 + 2026-10-18 引用 xid 对齐，`pkg/db/migrations/ganrag_user/0001-0005`）；剩余代码适配与功能跟踪见 [docs/fix.md](../../../docs/fix.md) `FIX-001` 与 [docs/todo.md](../../../docs/todo.md) 「users 相关代码适配」至「对外接口 xid」。
+> **E2EE 认证演进（定稿未实现）**：OPAQUE（RFC 9807）+ `user_e2ee` + 恢复码重置的设计已落地（[docs/e2ee.md](../../../docs/e2ee.md)）；代码/迁移未做，跟踪见 [docs/todo.md](../../../docs/todo.md)「OPAQUE 认证改造」。

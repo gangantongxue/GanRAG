@@ -154,6 +154,8 @@ Go 标准库结构化日志 + 日志文件轮转：
 |------|------|------|
 | HTTP 框架 | Hertz | Gateway 使用，详见 service/gateway/docs/ |
 | AI 框架 | Eino | AI Service 使用，详见 service/ai/docs/ |
+| 语义精排 | Qwen3-Reranker-0.6B | 语义召回后、最终融合前；0.6B 适配 8GB 显存，在线可选/离线质检，详见 [service/ai/docs/architecture.md](../service/ai/docs/architecture.md)「多路召回与聚合排序」 |
+| 离线调参评估 | Qwen3.5-4B | 本地 Ollama 部署；固定 rubric + 集成打分，只输出排序质量评分，不进入在线链路，详见 [social-recall.md](social-recall.md)「自动调参闭环」 |
 | 服务间通信 | gRPC | 内部服务通信 |
 | 数据库 | MySQL | 主数据存储 |
 | ORM | GORM | 数据库访问 + Generator 代码生成 |
@@ -191,12 +193,14 @@ Go 标准库结构化日志 + 日志文件轮转：
 | 公共 async_tasks 失败任务表与 `pkg/asynctask` | ✅ 已实现（2026-10-18：`ganrag_common.async_tasks` + 同事务 outbox；worker/后台接口待做） | P1 | [database.md](database.md)（「ganrag_common」）、[pkg/asynctask/README.md](../pkg/asynctask/README.md) |
 | 多智能体路由与切换（Decima-small） | 📝 设计定稿，代码未实现 | P1.5 | [service/ai/docs/architecture.md](../service/ai/docs/architecture.md)（「多智能体路由与切换」） |
 | 上下文压缩（会话级 context + 消息游标 + 隐藏 Agent 提示词） | 📝 设计定稿，代码未实现 | P1.5 | [service/ai/docs/architecture.md](../service/ai/docs/architecture.md)、[data-model.md](data-model.md)（「上下文压缩」） |
-| 多路召回聚合、社交召回与 Decima-small 审查 | 📝 设计定稿，代码未实现 | P3 | [social-recall.md](social-recall.md)、[service/ai/docs/architecture.md](../service/ai/docs/architecture.md)（「多路召回与聚合审查」） |
+| 多路召回聚合、社交召回与 Qwen3-Reranker-0.6B 语义精排 | 📝 设计定稿，代码未实现 | P3 | [social-recall.md](social-recall.md)、[service/ai/docs/architecture.md](../service/ai/docs/architecture.md)（「多路召回与聚合排序」） |
 | 独立社交图服务（gograph / 互关 / 二跳 / PageRank / Leiden / Jaccard） | 📝 设计定稿，代码未实现 | P3 | [service/social-graph/docs/architecture.md](../service/social-graph/docs/architecture.md) |
-| 社交召回权重标定与公开数据集评测（T2Ranking / Dianping / Douban / ChronoQA） | 📝 设计定稿，实验未开始 | P3 | [social-recall.md](social-recall.md) |
+| 社交召回权重标定与两层统一测试集评测（选型/角色/方法论在 [social-recall.md](social-recall.md)，融合流水线细节在 `datasets/README.md`，不入 git） | 📝 设计定稿，实验未开始 | P3 | [social-recall.md](social-recall.md)（「数据融合与统一测试集」「调优路线」） |
+| 离线自动调参闭环（Qwen3.5-4B 评分 + 贝叶斯优化） | 📝 设计定稿，实验未开始 | P3 | [social-recall.md](social-recall.md)（「自动调参闭环」） |
 | 文档上传（pdf / docx / html → markitdown） | 📝 设计定稿，代码未实现 | P1.5 | 本文「文档转换」、[product.md](product.md)（「文档上传」） |
 | 向量化按模型存储与检索路由 | 📝 设计定稿，代码未实现 | P1.5 | [service/vector-store/docs/architecture.md](../service/vector-store/docs/architecture.md)（「向量化按模型存储与检索路由」） |
 | chat_sessions.agent / context / context_msg_id 字段 | 🗄 表结构已落地（ai 0001-0005，含 user_xid/kb_xid/context_msg_xid） | P1 | [data-model.md](data-model.md)（「AI 服务实现」） |
+| **端到端加密认证与私聊（OPAQUE RFC 9807 + key bundle）** | 📝 设计定稿，代码未实现（`user_e2ee` 规划表未迁移；现役仍为 bcrypt） | P4（聊天前置） | [e2ee.md](e2ee.md)、[service/user/docs/architecture.md](../service/user/docs/architecture.md)（「端到端加密认证演进」） |
 
 ## 决策记录
 
@@ -223,17 +227,17 @@ Go 标准库结构化日志 + 日志文件轮转：
 | 2026-10-09 | 聊天会话绑定检索范围（单库或全局，kb_id=0 表示全局）；关系状态（own/member/star/follow）作为检索权重信号 | 检索范围随会话固化保证历史会话可复现；权重映射由 AI 服务配置持有，P3 调参 |
 | 2026-10-09 | 表结构 P1 一次设计到位，接口/界面按 P1 内容聊天、P2 社交、P3 权重三期交付 | 避免后期破坏性迁移；关系状态从第一天起即为完整事实；详见 docs/data-model.md |
 | 2026-10-11 | Gateway 第一期落地：Hertz 路由 + access token 本地验签 + 手写 HTTP→gRPC 转发（先接 user 5 个 RPC）+ 双维度令牌桶限流（auth 1/5、default 10/20，超限 429 统一错误体） | 手写 handler 少依赖、错误映射可控；限流按「登录用户 / 匿名 IP」分桶防爆破；熔断与限流灰度策略等需求出现再加（YAGNI）；详见 service/gateway/docs/architecture.md |
-| 2026-10-16 | AI 服务智能体路由与召回审查选型 Decima-small（Apache-2.0，本地 pip 部署） | 结构化输出 choice / noul 及概率；路由和候选审查均由 Go 通过 HTTP 调用 `python -m decima.serve`，不在 Go 内嵌模型运行时；详见 service/ai/docs/architecture.md |
+| 2026-10-16 | AI 服务智能体路由与召回审查选型 Decima-small（Apache-2.0，本地 pip 部署） | 结构化输出 choice / noul 及概率；路由和候选审查均由 Go 通过 HTTP 调用 `python -m decima.serve`，不在 Go 内嵌模型运行时；详见 service/ai/docs/architecture.md；**2026-11-02 起召回语义精排改由 Qwen3-Reranker-0.6B 承担，Decima 仅保留 Agent 选择** |
 | 2026-10-16 | Agent 切换采用「当前概率阈值 + 全体 Agent 重新选择」 | 当前 Agent 概率达到阈值则保持；低于阈值才取全体最高概率者，最高者仍为当前 Agent 时不切换，避免仅因 top 结果抖动而切换 |
 | 2026-10-16 | OpenAI 提示词采用固定通用 System + User 类型隐藏 Agent 提示词 | Agent 提示词用特殊标签注入；切换时追加到上下文末尾；压缩时只保留最新段并移到摘要前；`agent-system` 不进入用户展示和上下文搜索 |
-| 2026-10-16 | 多路召回采用权限前置、向量/关键词合并、关系/时间/热度重排和 Decima-small 审查 | 权限不可被排序信号覆盖；保留各信号支持解释、调参和消融，避免静态拍脑袋排序；2026-10-20 升级为社交分数 + star + 时效，见 [social-recall.md](social-recall.md) |
+| 2026-10-16 | 多路召回采用权限前置、向量/关键词合并、关系/时间/热度重排和 Decima-small 审查 | 权限不可被排序信号覆盖；保留各信号支持解释、调参和消融，避免静态拍脑袋排序；2026-10-20 升级为社交分数 + star + 时效，见 [social-recall.md](social-recall.md)；**2026-11-02 起 Decima 审查退出召回链路，改由 Qwen3-Reranker-0.6B 在融合前做语义精排** |
 | 2026-10-15 | 多智能体能力列为 P1.5 独立阶段，表字段 P1 一次设计到位 | P1 先单智能体闭环；chat_sessions.agent / chat_messages.agent 随 P1 建表落地，避免破坏性迁移；详见 docs/data-model.md |
 | 2026-10-15 | 文章支持 pdf / docx / html 上传：markitdown 转 md 存入 articles.content，原文附件留档，内容只读 | 向量化 / 溯源引用 / 前端渲染统一走 content 口径，重建索引免重跑转换、不受版本漂移影响；不做 OCR（内嵌图片文字不进检索，前端明示）；详见 docs/product.md；内容存储后续改为 Garage `content_key`，见同日 repository 数据库重设计 |
 | 2026-10-15 | 模型上下文采用「会话级 context + 消息游标」替换式压缩，不落消息表 | 消息表保持纯对话，模型上下文结构性不进用户页面；多次压缩直接替换无堆积；原文不删、search_context 仍可溯；详见 docs/data-model.md |
 | 2026-10-15 | 向量化结果按「知识库 × 向量化模型」分集合存储（`kb-<kb_id>-<model_id>`），检索按模型路由 | 不同模型维度不同、同集合维度必须一致，只能分集合；切换模型全量重建新集合、旧集合保留期可回滚；详见 service/vector-store/docs/architecture.md |
 | 2026-10-15 | 文档新增「设计落地状态」聚合表 + 各设计章节就近状态标注 | 已定稿未实现的设计集中登记，防止文档与代码状态脱节；实现时必须同步更新 |
 | 2026-10-15 | 数据库禁止物理外键，一律逻辑引用；建立 docs/fix.md / docs/todo.md 待完成登记制度 | 外键耦合迁移、违背服务独立；待完成事项统一登记跟踪，防止文档与代码脱节；详见根 AGENTS.md「数据库设计规范」「待完成事项管理」 |
-| 2026-10-15 | 登录标识改邮箱（email 唯一，username 降为可重复展示名、删 nickname）；refresh_tokens 改 sessions 会话表（每设备一行，多端登录 + 设备管理）；引入 Redis 存邮箱验证码（注册/找回密码） | 登录/找回密码统一走邮箱；会话按设备建模支撑设备管理；验证码的过期与一次性语义由 Redis 天然承担不建表；详见 docs/data-model.md、service/user/docs/architecture.md |
+| 2026-10-15 | 登录标识改邮箱（email 唯一，username 降为可重复展示名、删 nickname）；refresh_tokens 改 sessions 会话表（每设备一行，多端登录 + 设备管理）；引入 Redis 存邮箱验证码（注册/找回密码） | 登录/找回密码统一走邮箱；会话按设备建模支撑设备管理；验证码的过期与一次性语义由 Redis 天然承担不建表；详见 docs/data-model.md、service/user/docs/architecture.md；**2026-11-01 起认证方式向 OPAQUE 演进，见 [e2ee.md](e2ee.md)** |
 | 2026-10-15 | repository 数据库重设计（8 表→5 表）：正文与转换结果存 file-store（`articles.content_key`）、MySQL 不存内容；文章互链不建表即 Markdown 链接；对外实体加 XID 业务主键；附件挂 article_id 吸收绑定表；kb_members+kb_stars 合并 kb_user_relations | 内容是大对象不占 MySQL 行、重建索引免重跑转换；关联即正文本身不需关系表；自增 id 不出服务防遍历；表少口径清；覆盖 2026-10-09「前端渲染统一走 content」口径（改为 pdf/docx/html 展示源文件、content 仅供向量化/AI）；详见 docs/data-model.md「ganrag_repository」、根 AGENTS.md「业务主键（XID）规范」 |
 | 2026-10-15 | 聊天记录按「消息信封 + 全量步骤」存储（chat_messages + chat_message_parts），步骤 type/meta 对齐 Vercel AI SDK `UIMessage` part 模型、payload 原样存；消息加 xid、步骤不加；聊天交易型短文本入 MySQL | 每步（思考/工具调用/来源）全量存储支撑任意后加展示、扩展零 DDL；历史无损重组喂 useChat(initialMessages)，工具/思考/来源原生展示；RAG 来源存 article_xid 点击跳文章；详见 docs/data-model.md「ganrag_ai」 |
 | 2026-10-17 | **移除 File Store，直连 Garage（S3）**：删除 service/file-store 与 api/ 下 FileStore proto/gen；Repository 为唯一直接访问 Garage 的服务，Gateway 只验签/路由，前端只认 Gateway 稳定地址 | 通用 S3 协议后续可迁 MinIO/AWS S3/R2 只改配置；S3 凭证收敛一处；移除自建本地文件 + JSON 索引维护；详见 service/repository/docs/architecture.md |
@@ -248,4 +252,9 @@ Go 标准库结构化日志 + 日志文件轮转：
 | 2026-10-20 | 图计算选型 **gograph**（module `github.com/FlavioCFOliveira/GoGraph`，MIT），覆盖 PageRank/Leiden/BFS/Dijkstra/CSR；pre-1.0，必须 pin 版本 + adapter 隔离，保留 gonum/自研退路 | 功能密度合适、官方有社交网络示例；生态较小，不能把生产稳定性完全押在库上 |
 | 2026-10-20 | **社交召回权重纪律**：文档只给序关系，不写具体数值；融合权重、档位分差、半衰期、加成系数、RRF `k` 为待标定超参，由公开数据集实验确定；P95 封顶、衰减下限、`log1p`、排除自身 star、`1/(1+distance)` 为结构性常数 | 防止拍脑袋权重与文档固化；保证可解释、可复现、可消融；数值来源可追溯；见 [social-recall.md](social-recall.md) |
 | 2026-10-20 | 召回结构：**时效乘性、star/社交加性**；star 为知识库级（文章继承），**关注知识库 = star 该库**，不建 follow-kb 表；互关用双向 follow 检测，二跳用 BFS 派生不存边 | 过时文章语义再相关也应降权；star/社交可互相补偿；避免新增表和边爆炸；详见 [social-recall.md](social-recall.md) |
-| 2026-10-20 | 公开数据集路线：T2Ranking 定语义基线，Dianping/Douban（DISGCN 论文数据）校准一阶社交/star，ChronoQA 单独校时效；二跳/PageRank/Leiden/Jaccard 用 T2Ranking 合成社交层 + 消融定安全区间；DuReader/ZhihuRec 补充，R3-Skill/AgentSelect 后置 | 公开数据没有「社交 + 知识库文章 + 相关性」三元组；一阶可监督校准，复杂图特征只能看边际贡献与敏感区间；避免把模拟分布当真实标注 |
+| 2026-10-20 | 公开数据集路线：多个公开数据集融合为统一候选记录集，整体标定语义/一阶社交/star/时效权重；二跳/PageRank/Leiden/Jaccard 用合成社交层 + 消融定安全区间；R3-Skill/AgentSelect 后置 | 公开数据没有「社交 + 知识库文章 + 相关性」三元组，无单一数据集匹配本产品分布故融合；一阶可整体校准，复杂图特征只能看边际贡献与敏感区间；避免把模拟分布当真实标注；**2026-11-02 补充为「分部基线 + 两层统一测试集 + 联合校准」，见 [social-recall.md](social-recall.md) 第 7/8 章** |
+| 2026-10-23 | **数据集与调参口径**：融合数据集存 `datasets/`（整目录不入 git，融合方案细节见 `datasets/README.md`）；进 git 文档只记录「用融合数据集做整体的参数调整训练」+ 粗到细参数搜索，不记录数据集名称/Schema/融合细节；取消「按模块分数据集单独训练、后续合并」，改整体调参 | 数据与融合细节同置一处便于版本化管理；文档固化数据集细节易漂移（FIX-005 教训）；粗到细兼顾搜索效率与稳定性；见 [social-recall.md](social-recall.md) 第 7/8 章；**2026-11-02 部分调整：选型/角色/两层测试集回到 git 文档，融合流水线与运行细节仍在 `datasets/README.md`** |
+| 2026-11-01 | **认证演进为 OPAQUE（RFC 9807）+ 应用层 E2EE key bundle**：注册/登录改 OPAQUE（KE1/KE2/KE3），`export_key` 派生 KEK 加密 Ed25519/X25519 私钥包；服务器只存 OPAQUE record + key bundle 密文 + 公钥；新增 `user_e2ee`，最终移除 bcrypt `users.password_hash`；忘记密码用恢复码恢复同一 key bundle；**威胁模型 A**（服务器可能被入侵/好奇，不主动改前端）；AI 聊天/RAG **不适用** E2EE | 服务器不见密码/私钥；密码可恢复、改密不丢历史；服务端重置账号密码不能解密旧 key bundle；弱密码离线猜测为已知残余风险（OPAQUE 固有限制，Argon2id + 强密码缓解）；登录不自研挑战签名替代 AKE（恢复码重置仅用 Ed25519 持有证明）；详见 [e2ee.md](e2ee.md) |
+| 2026-11-02 | **语义重排改由专用重排模型承担**：Qwen3-Reranker-0.6B 插在语义召回之后、时效/star/社交融合之前，输出经候选集内排名化/分位数化为 `semanticScore`；`w_audit` 退出最终公式，Decima-small 仅负责 Agent 选择；禁止最终融合后全局重排 | 4B 在 8GB 显存下不适合在线，0.6B 与 Qwen3-Embedding-0.6B 同族且可在线；后置审查会覆盖社交权重、违反「最终排序由融合公式决定」；Decima `noul` 保留为语义路可选排序器（默认关闭）用于降级/消融 |
+| 2026-11-02 | **新增 Qwen3.5-4B 离线自动调参评分闭环**：固定 rubric（语义/社交序关系/时效/star）+ 校准评分头 + 3~5 次集成打分 + 温度校准；只输出排序质量评分，不输出参数值；贝叶斯优化驱动参数搜索，独立验证集复核 | 降低 LLM 评分噪声与漂移；避免用同一合成信号反向优化权重造成循环论证；复用现有本地 Ollama 部署，不新增在线模型 |
+| 2026-11-02 | **数据集选型/角色/两层测试集方法回到 git 文档**：记录 T2Ranking + DISGCN/Dianping + ChronoQA 主线及两层测试集；融合流水线、下载、脚本、缓存等细节仍在 `datasets/README.md`（不入 git） | 最新方案明确选型与角色表；只记录稳定方法论，细节仍收敛一处，兼顾可追溯与防漂移；覆盖 2026-10-23「不记录数据集名称」口径 |

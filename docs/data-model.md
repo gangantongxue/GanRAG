@@ -2,7 +2,7 @@
 
 ## 概述
 
-本文档定义全部业务表结构与设计决策（一次性设计，表结构一次到位、接口与界面分期交付，避免破坏性迁移）；**结构参考（每表完整 SQL + 字段 + 索引）见 [database.md](database.md)**。功能与术语见 [product.md](product.md)；账号域细节见 [service/user/docs/architecture.md](../service/user/docs/architecture.md)。
+本文档定义全部业务表结构与设计决策（一次性设计，表结构一次到位、接口与界面分期交付，避免破坏性迁移；P4 E2EE 的 `user_e2ee` 为独立安全层新增表，见 [e2ee.md](e2ee.md)）；**结构参考（每表完整 SQL + 字段 + 索引）见 [database.md](database.md)**。功能与术语见 [product.md](product.md)；账号域细节见 [service/user/docs/architecture.md](../service/user/docs/architecture.md)。
 
 ## 服务归属
 
@@ -10,7 +10,7 @@ MySQL 单实例（根目录 compose 编排），**每个服务一个 schema、�
 
 | Schema | 拥有者 | 表 | 迁移位置 |
 |--------|--------|----|----------|
-| `ganrag_user` | User 服务 | `users`、`sessions`、`user_follows` | `pkg/db/migrations/ganrag_user/` |
+| `ganrag_user` | User 服务 | `users`、`sessions`、`user_follows`（规划：`user_e2ee`） | `pkg/db/migrations/ganrag_user/` |
 | `ganrag_repository` | Repository 服务 | `knowledge_bases`、`directories`、`articles`、`attachments`、`kb_user_relations` | `pkg/db/migrations/ganrag_repository/` |
 | `ganrag_ai` | AI 服务 | `chat_sessions`、`chat_messages`、`chat_message_parts` | `pkg/db/migrations/ganrag_ai/` |
 | `ganrag_common` | 共享基础设施（经 `pkg/asynctask`） | `async_tasks` | `pkg/db/migrations/ganrag_common/` |
@@ -86,13 +86,14 @@ ganrag_common（共享基础设施，pkg/asynctask）
 | 标题约束 | 文章标题**不设唯一** | 引用靠 xid 不靠标题；同目录同名仅是编辑体验问题，由应用层提示 |
 | 计数冗余 | `knowledge_bases` 冗余 `article_count`、`star_count` | 列表页高频展示，避免每行 COUNT；同事务内增减 |
 | 登录标识 | `users.email` 唯一（登录/找回密码），`username` 仅展示名可重复 | 身份语义归邮箱；展示名无唯一约束避免改名冲突 |
+| E2EE 认证与密钥材料 | 认证改 OPAQUE（RFC 9807）；`user_e2ee` 存 OPAQUE `RegistrationRecord`、`export_key` 加密的 key bundle、恢复码加密的 recovery bundle、Ed25519/X25519 公钥与套件版本；`users.password_hash` 最终移除 | 服务器不见密码/私钥；密码可恢复、改密与重置不丢历史；AI 聊天不适用 E2EE；详见 [e2ee.md](e2ee.md) |
 | 会话模型 | refresh token 存储改为 `sessions` 表（每设备一行，`user_id`+`device_id` 唯一） | 支持多端登录与设备管理；轮换原地更新 `token_hash`，旧 token 复用按无效拒绝（不做重用检测） |
 | 验证码存储 | 邮箱验证码存 Redis（TTL、一次性、发送限频），不建表 | 过期与一次性语义由 Redis 天然承担，见 [service/user/docs/architecture.md](../service/user/docs/architecture.md) |
 | Redis Key 规范 | `<服务短名>:<域>:<标识>`（如 `user:email_code:register:<email>`） | 分层命名空间防撞名，服务短名与目录名一致；见根 AGENTS.md「Redis Key 规范」 |
 | 附件清理 | 附件直接挂 `article_id`（`kind` 区分源文件 / 内嵌图片），保存时按正文链接重建 kind=2 并清孤儿 | 少一张绑定表；附件单文章独占，清理路径单一 |
 | 关系单表 | `kb_user_relations` 单表承载成员（role）与收藏（starred）；owner 由 `knowledge_bases.owner_xid` 表示，不入表 | 与「关系状态」口径对齐，少两张表；避免两处真相 |
 | star 粒度 | star 是**知识库级**（`knowledge_bases.star_count` / `kb_user_relations.starred`）；文章热度继承所属 KB，不建 `article_stars` | 产品 star 语义是收藏/关注知识库；文章级 star 未建模，避免额外表与交互 |
-| 文章时间口径 | `created_at` 视为发布时间，`updated_at` 作为最后修改/新鲜度；无 `published_at` | 现有表只有这两个时间字段；时效衰减先用 `updated_at`，如后续需要内容级更新再加 `content_updated_at` |
+| 文章时间口径 | 时效性判断基准 = 最后修改时间 `articles.updated_at`；刚创建、无最后修改时间时用创建时间 `created_at` 兜底。不建模 `published_at` / 内容级时间 | 现有表只有这两个时间字段；`updated_at` 建表时等于 `created_at`，兜底语义天然成立；如后续需要内容级更新再加 `content_updated_at` |
 | 社交图派生 | `social-graph` 服务无自有数据库；关注/互关/二跳/协作/star 作者由 `user_follows`、`knowledge_bases`、`kb_user_relations` 派生 | 图是只读派生视图，不新增表、不跨库 JOIN；见 [social-recall.md](social-recall.md) |
 | 权重不入库 | 关系状态存库，权重映射由 AI 服务配置持有 | 权重是排序策略、需频繁调参，不是业务事实；存库会把调优变成改数据 |
 | 物理外键 | 全局禁止，一律逻辑引用（应用层保证完整性与级联删除） | 迁移独立、可并行开发；规则见根 AGENTS.md「数据库设计规范」 |
@@ -239,6 +240,8 @@ CREATE TABLE kb_user_relations (
 
 #### users 用户账号
 
+> 现役 `password_hash` 为 bcrypt；E2EE 目标态改用 OPAQUE（服务器不再保存密码哈希），迁移前以本表为准。目标设计与迁移影响见 [e2ee.md](e2ee.md)、[fix.md](fix.md) `FIX-027`。
+
 ```sql
 CREATE TABLE users (
   id            BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
@@ -253,6 +256,41 @@ CREATE TABLE users (
   UNIQUE KEY uk_users_email (email)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 ```
+
+#### user_e2ee E2EE 密钥材料（规划，未迁移）
+
+> 目标态表，随 OPAQUE 认证改造新增（`0006+`）；本文档先定结构，不执行迁移。设计见 [e2ee.md](e2ee.md)。
+
+```sql
+CREATE TABLE user_e2ee (                             -- 规划表，未迁移（0006+）
+  id                     BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  user_id                BIGINT UNSIGNED NOT NULL,       -- 逻辑引用 users.id（同服务）
+  user_xid               VARCHAR(32)     NOT NULL,       -- users.xid 全串（同服务冗余）
+  credential_id          VARCHAR(64)     NOT NULL,       -- OPAQUE credential_identifier（= user_xid）
+  opaque_suite           VARCHAR(32)     NOT NULL,       -- 如 ristretto255-SHA512
+  opaque_record          VARBINARY(512)  NOT NULL,       -- RFC 9807 RegistrationRecord 序列化
+  key_bundle_version     SMALLINT UNSIGNED NOT NULL,
+  key_bundle_nonce       VARBINARY(12)   NOT NULL,       -- AES-GCM nonce
+  key_bundle             VARBINARY(512)  NOT NULL,       -- export_key 派生 KEK 加密的 Ed25519/X25519 私钥包
+  recovery_version       SMALLINT UNSIGNED NOT NULL,
+  recovery_salt          VARBINARY(16)   NOT NULL,
+  recovery_nonce         VARBINARY(12)   NOT NULL,
+  recovery_bundle        VARBINARY(512)  NOT NULL,       -- 恢复码派生 KEK 加密的同一 key bundle
+  ed25519_public_key     VARBINARY(32)   NOT NULL,
+  x25519_public_key      VARBINARY(32)   NOT NULL,
+  created_at             DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at             DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  UNIQUE KEY uk_user_e2ee_user (user_id),
+  UNIQUE KEY uk_user_e2ee_credential (credential_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+```
+
+- 每用户一行；改密/重置原地替换密文与 record，不保留密钥历史（YAGNI）；该表不对外展示，不设业务主键 `xid`。
+- `opaque_record` 是 OPAQUE 服务端注册记录（含 OPAQUE AKE 公钥），**不是**聊天身份公钥；服务端按库序列化/反序列化，不解析内部结构。
+- `key_bundle` / `recovery_bundle` 均由客户端加密，服务端无 `export_key` / 恢复码，无法解密。
+- 恢复码默认强制生成；若产品允许跳过，`recovery_*` 改 NULL，并在 UI 明确「重置将丢失历史私聊」。
+- 公钥由 User 服务提供给聊天对端；客户端解密 key bundle 后必须校验公钥与 `*_public_key` 一致。
 
 #### sessions 登录会话（替代 refresh_tokens）
 
@@ -440,7 +478,7 @@ two_hop        = BFS 1~2 跳可达（不存边）
 
 1. 向量库按「知识库 × 向量化模型」隔离：vector-store 集合 `kb-<kb_xid>-<model_id>`（文章分块入库），全局检索时对可见集合逐个查询后归并；检索只查**当前模型**后缀的集合——用什么模型，就检索对应的向量化结果
 2. 文章保存/删除时，Repository 服务向 AI 服务同步增量（或 AI 订阅），由 AI 负责向量的写入与清理
-3. 检索先做权限硬过滤，再分别走向量与关键词召回并合并去重；基础融合用排名归一化或 RRF，时效乘性衰减，star（知识库级）与社交分数加性融合，最后由 Decima-small 对 Top-K 做 `noul` 相关性审查（P1 只做候选集过滤，P3 接入社交图、权重与审查；见 [social-recall.md](social-recall.md)）
+3. 检索先做权限硬过滤，再分别走向量与关键词召回并合并去重；语义路用排名归一化或 RRF 融合，可选 Qwen3-Reranker-0.6B 做语义精排并排名化/分位数化为 `semanticScore`；随后乘时效衰减、加 star（知识库级）与社交分数得到最终排序（P1 只做候选集过滤，P3 接入社交图、权重与语义精排；见 [social-recall.md](social-recall.md)）
 4. 向量输入统一为 `articles.content_key` 指向的 Garage 对象内 md（pdf/docx/html 即转换后的 md）：转换结果一次存储，重建索引 / 换 embedding 模型不重跑 markitdown；文档内嵌图片不提取，不参与分块
 5. 模型上下文不进用户消息流：压缩上下文存 `chat_sessions.context`，内部结构包含最新 `agent-system` 提示词和摘要；prompt 拼装 = 固定 System Prompt + context + `chat_messages` 中 `id >= context_msg_id` 的可见消息；预计请求 token 达模型上限的 65% 时触发压缩，压缩时**替换** context 并推进游标，最新 Agent 提示词置于摘要前，原始消息不删，`search_context` 排除 `agent-system`
 6. 切换向量化模型：新写入即切新模型集合 → 后台按 `articles.content_key` 读 md **全量重建**新模型集合（不重跑 markitdown）→ 重建完成前旧集合继续服务 → 完成后配置原子切换并下线旧集合（保留期可回滚）；旧向量按 metadata `embedding_model` 批量清理
@@ -461,5 +499,6 @@ two_hop        = BFS 1~2 跳可达（不存边）
 | P1 | user: 0001-0005（引用 xid 对齐）；repository: 0001-0008（五张表 + 引用 xid 对齐）；ai: 0001-0005（三张表 + 引用 xid 对齐）；common: 0001（async_tasks） | 全部表一次建齐；共享任务表同期落地 |
 | P2 | 无新表 | star / follow / 搜索 / 个人页面接口与界面 |
 | P3 | 无新表 | 社交图由现有表派生（`social-graph` 服务无自有库）；权重配置接入与公开数据集标定 |
+| P4 | user: 0006_user_e2ee（规划，未迁移） | OPAQUE 认证 + E2EE 密钥材料 + 恢复码；AI 聊天不适用；见 [e2ee.md](e2ee.md) |
 
-> 表结构先于接口建齐，是为了让关系状态从第一天起就是完整事实；P2 只是把已有数据的读写口打开，不做 DDL 变更。
+> 表结构先于接口建齐，是为了让关系状态从第一天起就是完整事实；P2 只是把已有数据的读写口打开，不做 DDL 变更。P4 的 `user_e2ee` 是独立安全层新增表，不改既有表语义。
