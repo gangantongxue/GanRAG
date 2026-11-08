@@ -25,6 +25,8 @@ vars:
     sh: find service -mindepth 2 -maxdepth 2 -name Taskfile.yml -exec dirname {} \; | xargs -n1 basename | sort
   # 数据集融合每批次轮数（task ds-run ROUNDS=5 覆盖；命令行变量优先于此处默认值）
   ROUNDS: "10"
+  # v3 融合复用 v2 引擎；该 venv 内安装 numpy（向量链路使用）
+  DS_PYTHON: "datasets/.venv/bin/python"
 
 tasks:
   default:
@@ -190,3 +192,89 @@ tasks:
     desc: 联合扫描召回参数（NDCG@10/Recall@20；task ds-tune -- --layer joint --max-queries 3000）
     cmds:
       - python3 datasets/scripts/tune.py {{.CLI_ARGS}}
+
+  # ---- v3 融合（复用 v2 引擎；DS_CONFIG 指向 datasets/configs/v3/fusion.json）----
+
+  ds-v3-check:
+    desc: v3 融合脚本自检（假数据 + mock 模型，秒级）
+    env:
+      DS_CONFIG: datasets/configs/v3/fusion.json
+    cmds:
+      - "{{.DS_PYTHON}} datasets/scripts/run.py --check"
+
+  ds-v3-smoke:
+    desc: v3 融合真模型冒烟（小骨架 2 轮，验证 Ollama/解析/落盘/续跑）
+    env:
+      DS_CONFIG: datasets/configs/v3/fusion.json
+    cmds:
+      - "{{.DS_PYTHON}} datasets/scripts/run.py --smoke"
+
+  ds-v3-run:
+    desc: v3 融合闭环：开始/续跑（task ds-v3-run ROUNDS=10）
+    env:
+      DS_CONFIG: datasets/configs/v3/fusion.json
+    cmds:
+      - "{{.DS_PYTHON}} datasets/scripts/run.py --rounds {{.ROUNDS}} {{.CLI_ARGS}}"
+
+  ds-v3-status:
+    desc: 查看 v3 融合调参进度（不执行）
+    env:
+      DS_CONFIG: datasets/configs/v3/fusion.json
+    cmds:
+      - "{{.DS_PYTHON}} datasets/scripts/run.py --status"
+
+  ds-v3-materialize:
+    desc: 用 v3 最优参数物化 processed/v3/candidates.jsonl
+    env:
+      DS_CONFIG: datasets/configs/v3/fusion.json
+    cmds:
+      - "{{.DS_PYTHON}} datasets/scripts/run.py --materialize"
+
+  ds-v3-embed:
+    desc: v3 BM25 过滤 + 向量化 + 精确 top-K（长任务，可中断续跑）
+    env:
+      DS_CONFIG: datasets/configs/v3/fusion.json
+    cmds:
+      - "{{.DS_PYTHON}} datasets/scripts/embed.py --all {{.CLI_ARGS}}"
+
+  ds-v3-embed-bm25:
+    desc: v3 只过滤 T2Ranking BM25 到选中 query 的 top-K
+    env:
+      DS_CONFIG: datasets/configs/v3/fusion.json
+    cmds:
+      - "{{.DS_PYTHON}} datasets/scripts/embed.py --bm25 {{.CLI_ARGS}}"
+
+  ds-v3-embed-collection:
+    desc: v3 只向量化 collection（可中断续跑）
+    env:
+      DS_CONFIG: datasets/configs/v3/fusion.json
+    cmds:
+      - "{{.DS_PYTHON}} datasets/scripts/embed.py --collection {{.CLI_ARGS}}"
+
+  ds-v3-embed-queries:
+    desc: v3 只向量化选中 query
+    env:
+      DS_CONFIG: datasets/configs/v3/fusion.json
+    cmds:
+      - "{{.DS_PYTHON}} datasets/scripts/embed.py --queries {{.CLI_ARGS}}"
+
+  ds-v3-embed-search:
+    desc: v3 只做向量精确 top-K 检索
+    env:
+      DS_CONFIG: datasets/configs/v3/fusion.json
+    cmds:
+      - "{{.DS_PYTHON}} datasets/scripts/embed.py --search {{.CLI_ARGS}}"
+
+  ds-v3-build-tuning:
+    desc: 构建 v3 neutral/joint 两层调参数据（processed/v3/tuning.jsonl）
+    env:
+      DS_CONFIG: datasets/configs/v3/fusion.json
+    cmds:
+      - "{{.DS_PYTHON}} datasets/scripts/build_tuning.py {{.CLI_ARGS}}"
+
+  ds-v3-tune:
+    desc: v3 联合扫描召回参数（task ds-v3-tune -- --layer joint --max-queries 3000）
+    env:
+      DS_CONFIG: datasets/configs/v3/fusion.json
+    cmds:
+      - "{{.DS_PYTHON}} datasets/scripts/tune.py {{.CLI_ARGS}}"

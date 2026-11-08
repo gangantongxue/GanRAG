@@ -8,6 +8,11 @@
 |------|---------|------|
 | 融合方案修订（`datasets/README.md`）：抽查只用 Qwen 3.5 4B（删 9B）、关系映射贴产品档位（关注用户/star 知识库/二跳等）、同文章多视角对照设计、`runs.jsonl` 过程记录与断点续跑 | 2026-10-23 | ✅已完成(2026-10-23) |
 | 数据集落位与文档口径整理：新增 `datasets/`（不进 git，内含融合方案说明文档）承载数据集与融合细节；项目文档只记录「用融合后数据集做整体参数调整训练」+ 粗到细调参，精简全部数据集名称/细节（[social-recall.md](social-recall.md) 第 7 章等），「单独模块单独数据集训练」口径改为整体调参 | 2026-10-23 | ✅已完成(2026-10-23) |
+| GanRAG v3 数据集阶段 1–2：按 [v3-dataset-design.md](v3-dataset-design.md) §10 落盘 9 份核心文件 + `environment.lock`（`datasets/configs/v3/`）；固定 T2Ranking/DISGCN/ChronoQA 版本、SHA256、许可证；完成 E01/E02a-b/E04/E09 原生数据小样验收；不启动全量物化、不改 v2 | 2026-11-08 | ✅已完成(2026-11-08) |
+| GanRAG v3 融合可执行化：复用 v2 融合引擎 + `datasets/configs/v3/fusion.json` + `ds-v3-*` 命令；建 venv/numpy、下载 BM25、跑 check/smoke；不启动全量融合 | 2026-11-08 | ✅已完成(2026-11-08) |
+| GanRAG v3 阶段 3–5：100–200 query 小规模 L2 + Schema/split 断言 + 共线性诊断 + 300/120 人工锚点验收；通过后冻结 interaction terms、参数范围与实验脚本 | 2026-11-08 | ⬜待处理 |
+| GanRAG v3 完整 Schema 引擎：把当前 `v2-reuse` / `v3-preview` 升级为完整 v3 字段（`counterfactual_group_id`、`label_status`、`semantic_score_config_id` 等），供严格 E05/E06/E10 实验 | 2026-11-08 | ⬜待处理 |
+| GanRAG v3 阶段 6–8：全量物化（2k–5k query / 20k–40k pair / ≥1,000 counterfactual group）并执行 E01–E10；最终测试集只用于最终报告 | 2026-11-08 | ⬜待处理 |
 | env 配置统一到仓库根 `.env`（服务启动自动加载根 `.env`、删 `service/user/.env`、根 `.env` 补齐 JWT/Redis/邮件占位等全部变量，`.env.example` 与文档同步） | 2026-10-17 | ✅已完成(2026-10-17) |
 | 引入 Redis（compose + 配置 + go-redis）+ 邮箱验证码落 Redis（`user:email_code:<scene>:<email>`，TTL 5 分钟、一次性、失败 5 次作废、发送 60s 限频）+ 验证码邮件发送通道（SMTP 落地时定） | 2026-10-15 | ✅已完成(2026-10-17) |
 | users 相关代码适配（建表迁移已交付 2026-10-15）：注册/登录改「邮箱+密码」、注册接邮箱验证码、执行 `task db-gen` 并适配 store/handler 到新表结构 | 2026-10-15 | ✅已完成(2026-10-17) |
