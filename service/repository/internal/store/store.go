@@ -20,6 +20,8 @@ var (
 	ErrDirectoryNotFound      = errcode.New(errcode.CodeRepoDirNotFound, codes.NotFound, "目录不存在")
 	ErrDirectoryNameTaken     = errcode.New(errcode.CodeRepoDirNameTaken, codes.AlreadyExists, "同级目录名称已存在")
 	ErrDirectoryMoveIntoSelf  = errcode.New(errcode.CodeRepoDirectoryMoveIntoSelf, codes.InvalidArgument, "不能移入自身或子孙目录")
+	ErrArticleNotFound        = errcode.New(errcode.CodeRepoArticleNotFound, codes.NotFound, "文章不存在")
+	ErrAttachmentPathTaken    = errcode.New(errcode.CodeRepoAttachmentPathTaken, codes.AlreadyExists, "同文章下附件相对路径已存在")
 )
 
 // 知识库列表 scope（对齐 api/proto/repository/v1 ListKnowledgeBasesRequest）

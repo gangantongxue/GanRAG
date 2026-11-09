@@ -56,8 +56,9 @@ func TestCodeValues(t *testing.T) {
 		CodeUserDisabled: "CodeUserDisabled", CodeUserEmailCodeRateLimited: "CodeUserEmailCodeRateLimited",
 		// repository
 		CodeRepoDirectoryMoveIntoSelf: "CodeRepoDirectoryMoveIntoSelf", CodeRepoKBNotFound: "CodeRepoKBNotFound",
-		CodeRepoDirNotFound: "CodeRepoDirNotFound", CodeRepoKBNameTaken: "CodeRepoKBNameTaken",
-		CodeRepoDirNameTaken: "CodeRepoDirNameTaken", CodeRepoChecksumMismatch: "CodeRepoChecksumMismatch",
+		CodeRepoDirNotFound: "CodeRepoDirNotFound", CodeRepoArticleNotFound: "CodeRepoArticleNotFound",
+		CodeRepoKBNameTaken: "CodeRepoKBNameTaken", CodeRepoDirNameTaken: "CodeRepoDirNameTaken",
+		CodeRepoAttachmentPathTaken: "CodeRepoAttachmentPathTaken", CodeRepoChecksumMismatch: "CodeRepoChecksumMismatch",
 		// vector-store
 		CodeVectorCollectionNotFound: "CodeVectorCollectionNotFound", CodeVectorDocumentNotFound: "CodeVectorDocumentNotFound",
 		CodeVectorCollectionExists: "CodeVectorCollectionExists",

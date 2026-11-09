@@ -19,7 +19,9 @@
 | Qwen3-Reranker-0.6B 语义精排接入与选型验证：语义召回后、时效/star/社交融合前接入；rerankScore 候选集内排名化/分位数化；禁止最终融合后全局重排；上线前在 T2Ranking 候选集对比「无重排 / Decima noul / 0.6B」（可选 bge-reranker-v2-m3），评估 NDCG@10 与 P95 延迟；见 [social-recall.md](social-recall.md) | 2026-11-02 | ⬜待处理 |
 | Qwen3.5-4B 离线自动调参闭环：固定 rubric（语义相关性/社交序关系/时效合理性/star 质量）+ 校准评分头 + 3~5 次集成打分 + 温度校准；只评分不输出参数，贝叶斯优化驱动参数搜索，独立验证集复核；见 [social-recall.md](social-recall.md)「自动调参闭环」 | 2026-11-02 | ⬜待处理 |
 | 第一层统一测试集与分部基线：T2Ranking + DISGCN/Dianping + ChronoQA 分部标定后合并；按用户/查询隔离切分；MVP 5~10 万 query-article 对；第二层复杂图消融见「复杂图特征消融」条目；见 [social-recall.md](social-recall.md) | 2026-11-02 | ⬜待处理 |
-| Repository 服务实现（阶段二b：文章 5 RPC + `GetResource` + `ResolveReference`，正文/附件流式读写与相对路径解析） | 2026-10-18 | ⬜待处理 |
+| Repository 服务实现（阶段二b-1：文章元信息 CRUD 4 RPC `CreateArticle`/`GetArticle`/`UpdateArticle`/`DeleteArticle`，附件行全量重建、孤儿对象清理、`article_count` 维护） | 2026-10-18 | ✅已完成(2026-11-09) |
+| Repository 服务实现（阶段二b-2：正文/附件流式读取 `GetArticleContent` + `GetResource`，objectstore 流式读 + `DownloadChunk` + 相对路径防逃逸） | 2026-10-18 | ⬜待处理 |
+| Repository 服务实现（阶段二b-3：`ResolveReference` 互链解析，相对路径规范化、断链统一 NotFound） | 2026-10-18 | ⬜待处理 |
 | Repository 服务实现（阶段三：分片上传 5 RPC：`InitUpload`/`UploadPart`/`GetUploadStatus`/`CompleteUpload`/`AbortUpload`，断点续传与三层完整性校验） | 2026-10-18 | ⬜待处理 |
 | async_tasks 重试 worker + 后台查询接口（按 `status=0` 集中处理，展示 `source_service`/`task_type`/`payload`/`last_error`） | 2026-10-18 | ⬜待处理 |
 | 其他服务接入 `pkg/asynctask` 失败上报（AI / vector-store / user 按需） | 2026-10-18 | ⬜待处理 |

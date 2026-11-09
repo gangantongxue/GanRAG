@@ -20,6 +20,7 @@ import (
 	repositoryv1 "github.com/gangantongxue/GanRAG/api/gen/repository/v1"
 	dbmodel "github.com/gangantongxue/GanRAG/pkg/db/model/ganrag_repository"
 	"github.com/gangantongxue/GanRAG/pkg/eid"
+	"github.com/gangantongxue/GanRAG/service/repository/internal/objectstore"
 	"github.com/gangantongxue/GanRAG/service/repository/internal/store"
 )
 
@@ -29,11 +30,30 @@ type fakeObjects struct {
 	mediaType string
 	metadata  map[string]string
 	err       error
+	infos     map[string]objectstore.ObjectInfo
 }
 
 func (f *fakeObjects) Put(_ context.Context, key string, data []byte, contentType string, metadata map[string]string) error {
 	f.key, f.data, f.mediaType, f.metadata = key, data, contentType, metadata
-	return f.err
+	if f.err != nil {
+		return f.err
+	}
+	if f.infos == nil {
+		f.infos = map[string]objectstore.ObjectInfo{}
+	}
+	f.infos[key] = objectstore.ObjectInfo{Size: int64(len(data)), ContentType: contentType, Metadata: metadata}
+	return nil
+}
+
+func (f *fakeObjects) Head(_ context.Context, key string) (objectstore.ObjectInfo, error) {
+	if f.err != nil {
+		return objectstore.ObjectInfo{}, f.err
+	}
+	info, ok := f.infos[key]
+	if !ok {
+		return objectstore.ObjectInfo{}, objectstore.ErrObjectNotFound
+	}
+	return info, nil
 }
 
 type fakeCleanup struct {
@@ -70,6 +90,9 @@ func newTestHandler(t *testing.T) (*Handler, *fakeObjects, *fakeCleanup) {
 	}
 	if err := db.Exec("CREATE UNIQUE INDEX uk_dir_parent_name ON directories (kb_id, parent_id, name)").Error; err != nil {
 		t.Fatalf("创建目录唯一索引失败: %v", err)
+	}
+	if err := db.Exec("CREATE UNIQUE INDEX uk_attachment_article_path ON attachments (article_id, relative_path)").Error; err != nil {
+		t.Fatalf("创建附件唯一索引失败: %v", err)
 	}
 
 	objects := &fakeObjects{}

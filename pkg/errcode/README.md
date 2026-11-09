@@ -63,8 +63,10 @@ GanRAG 的业务错误、业务错误码与状态码转换的**唯一入口**：
 | `CodeRepoDirectoryMoveIntoSelf` | `40030` | 不能移入自身或子孙目录 | repository | store/store.go |
 | `CodeRepoKBNotFound` | `40430` | 知识库不存在 | repository | store/store.go |
 | `CodeRepoDirNotFound` | `40431` | 目录不存在 | repository | store/store.go |
+| `CodeRepoArticleNotFound` | `40432` | 文章不存在 | repository | store/store.go |
 | `CodeRepoKBNameTaken` | `40930` | 知识库名称已存在 | repository | store/store.go |
 | `CodeRepoDirNameTaken` | `40931` | 同级目录名称已存在 | repository | store/store.go |
+| `CodeRepoAttachmentPathTaken` | `40932` | 同文章下附件相对路径已存在 | repository | store/store.go |
 | `CodeRepoChecksumMismatch` | `50030` | sha256 校验失败 | repository | server/handler.go |
 | `CodeVectorCollectionNotFound` | `40460` | 集合不存在 | vector-store | store/store.go |
 | `CodeVectorDocumentNotFound` | `40461` | 文档不存在 | vector-store | store/store.go |

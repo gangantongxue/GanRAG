@@ -42,8 +42,10 @@ const (
 	CodeRepoDirectoryMoveIntoSelf = 40030 // 不能移入自身或子孙目录
 	CodeRepoKBNotFound            = 40430 // 知识库不存在
 	CodeRepoDirNotFound           = 40431 // 目录不存在
+	CodeRepoArticleNotFound       = 40432 // 文章不存在
 	CodeRepoKBNameTaken           = 40930 // 知识库名称已存在
 	CodeRepoDirNameTaken          = 40931 // 同级目录名称已存在
+	CodeRepoAttachmentPathTaken   = 40932 // 同文章下附件相对路径已存在
 	CodeRepoChecksumMismatch      = 50030 // sha256 校验失败
 )
 

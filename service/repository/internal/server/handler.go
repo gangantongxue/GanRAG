@@ -16,20 +16,24 @@ import (
 	dbmodel "github.com/gangantongxue/GanRAG/pkg/db/model/ganrag_repository"
 	"github.com/gangantongxue/GanRAG/pkg/eid"
 	"github.com/gangantongxue/GanRAG/pkg/errcode"
+	"github.com/gangantongxue/GanRAG/service/repository/internal/objectstore"
 	"github.com/gangantongxue/GanRAG/service/repository/internal/store"
 )
 
 const (
 	knowledgeBaseNameMaxLen = 100
 	knowledgeBaseDescMaxLen = 500
+	articleTitleMaxLen      = 200
+	relativePathMaxLen      = 255
 	originalNameMaxLen      = 255
 	contentTypeMaxLen       = 100
 	sha256HexLen            = 64
 )
 
-// objectPutter Garage 写入（*objectstore.Store 实现）
-type objectPutter interface {
+// objectStorage Garage 对象读写（*objectstore.Store 实现）
+type objectStorage interface {
 	Put(ctx context.Context, key string, data []byte, contentType string, metadata map[string]string) error
+	Head(ctx context.Context, key string) (objectstore.ObjectInfo, error)
 }
 
 // cleanupRunner 事务提交后的对象清理（*cleanup.Runner 实现）
@@ -37,18 +41,18 @@ type cleanupRunner interface {
 	Run(ctx context.Context, refs []store.ObjectRef)
 }
 
-// Handler 实现 repositoryv1.RepositoryServiceServer（阶段一、二a：知识库 + 目录树 + 整段上传）
+// Handler 实现 repositoryv1.RepositoryServiceServer（阶段一、二a、二b-1：知识库 + 目录树 + 整段上传 + 文章元信息）
 type Handler struct {
 	repositoryv1.UnimplementedRepositoryServiceServer
 	st           *store.Store
-	objects      objectPutter
+	objects      objectStorage
 	cleanup      cleanupRunner
 	log          *slog.Logger
 	maxWholeSize int64
 }
 
 // NewHandler 创建 gRPC handler
-func NewHandler(st *store.Store, objects objectPutter, cleaner cleanupRunner, log *slog.Logger, maxWholeSize int64) *Handler {
+func NewHandler(st *store.Store, objects objectStorage, cleaner cleanupRunner, log *slog.Logger, maxWholeSize int64) *Handler {
 	return &Handler{st: st, objects: objects, cleanup: cleaner, log: log, maxWholeSize: maxWholeSize}
 }
 
@@ -314,6 +318,45 @@ func validOriginalName(s string) (string, error) {
 		return "", errcode.InvalidArgument("original_name 不能超过 255 字符")
 	}
 	return s, nil
+}
+
+// validTitle 校验文章标题（去首尾空白后 1-200 字符）
+func validTitle(s string) (string, error) {
+	title := strings.TrimSpace(s)
+	n := utf8.RuneCountInString(title)
+	if n < 1 || n > articleTitleMaxLen {
+		return "", errcode.InvalidArgument("标题长度应为 1-200 字符")
+	}
+	return title, nil
+}
+
+// validArticleType 校验文章原始格式：1 md 2 txt
+func validArticleType(t int32) bool {
+	return t == 1 || t == 2
+}
+
+// normalizeRelativePath 规范化附件/资源相对路径：统一分隔符为 /、忽略 . 段，
+// 禁绝对路径、禁 .. 逃逸段、禁空；批 2/3 的 GetResource/ResolveReference 复用
+func normalizeRelativePath(s string) (string, error) {
+	p := strings.ReplaceAll(strings.TrimSpace(s), "\\", "/")
+	if p == "" || strings.HasPrefix(p, "/") || utf8.RuneCountInString(p) > relativePathMaxLen {
+		return "", errcode.InvalidArgument("relative_path 不合法")
+	}
+	segs := strings.Split(p, "/")
+	out := make([]string, 0, len(segs))
+	for _, seg := range segs {
+		switch seg {
+		case "..":
+			return "", errcode.InvalidArgument("relative_path 不合法")
+		case "", ".":
+			continue
+		}
+		out = append(out, seg)
+	}
+	if len(out) == 0 {
+		return "", errcode.InvalidArgument("relative_path 不合法")
+	}
+	return strings.Join(out, "/"), nil
 }
 
 // validSHA256 校验并归一化 64 位十六进制 sha256
