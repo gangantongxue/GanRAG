@@ -676,6 +676,22 @@ derived_files:
 
 v2 保留作 baseline，不覆盖；v3 使用 `config_version=v3` 自动隔离到 `processed/v3`、`logs/runs.v3.jsonl`、`cache/v3`。
 
+### v3-preview → v3-full（2026-11-19）
+
+- **版本号**：`schema_version=v3-full`，`dataset_version=2026-11-19`；`v3-preview` 归档到 `datasets/archive/v3-preview/`。
+- **修改原因**：preview 只有 v2 的 11 个顶层字段，缺 `semantic_score`、`label_status`、`negative_subtype`、`counterfactual_group_id`，E05/E06/E10 无法严格执行。
+- **影响范围**：融合记录字段、候选集（BM25 ∪ 向量 ∪ qrels）、语义分、负例子类、social 反事实组、split/泄漏断言；23 轮 preview QC 只作过程留痕，不作正式结论。
+- **是否影响既有实验结论**：不影响；preview 未产生正式实验结论，且已归档隔离。
+- **是否需要重跑**：v3-full 需重新做小规模 L2 验收与全量物化；preview 的调参参数不复用，正式参数在阶段 3–5 验收后冻结。
+
+#### 执行偏差（2026-11-20）
+
+- **偏差**：阶段 3–5 的 300/120 人工锚点未执行；用户决定跳过人工审核，仅保留 LLM 预标注（`anchors.review.csv`）。
+- **影响**：不计算、不声称 human agreement；不能写成“通过人工锚点门槛”；E05/E06/E10 的标注质量解释必须注明该限制。
+- **补做方式**：`anchors.review.csv` 填 `human_label` 后运行 `l2_accept.py --agreement`；补做 120 双人锚点后可重新评估。
+- **是否阻塞全量物化**：按用户决定不阻塞；全量物化继续，但论文/数据集卡保留限制说明。
+- **全量物化结果（2026-11-20）**：309,512 条 / 4,361 query / 34,888 pair / 完整 social 组 19,994；Schema/split/VIF 通过；E01–E10 脚本待实现。
+
 ---
 
 ## 14. 新会话执行提示

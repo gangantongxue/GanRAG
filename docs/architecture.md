@@ -195,7 +195,7 @@ Go 标准库结构化日志 + 日志文件轮转：
 | 上下文压缩（会话级 context + 消息游标 + 隐藏 Agent 提示词） | 📝 设计定稿，代码未实现 | P1.5 | [service/ai/docs/architecture.md](../service/ai/docs/architecture.md)、[data-model.md](data-model.md)（「上下文压缩」） |
 | 多路召回聚合、社交召回与 Qwen3-Reranker-0.6B 语义精排 | 📝 设计定稿，代码未实现 | P3 | [social-recall.md](social-recall.md)、[service/ai/docs/architecture.md](../service/ai/docs/architecture.md)（「多路召回与聚合排序」） |
 | 独立社交图服务（gograph / 互关 / 二跳 / PageRank / Leiden / Jaccard） | 📝 设计定稿，代码未实现 | P3 | [service/social-graph/docs/architecture.md](../service/social-graph/docs/architecture.md) |
-| 社交召回权重标定与两层统一测试集评测（选型/角色/方法论在 [social-recall.md](social-recall.md)，融合流水线细节在 `datasets/README.md`，不入 git） | 📝 设计定稿，实验未开始 | P3 | [social-recall.md](social-recall.md)（「数据融合与统一测试集」「调优路线」） |
+| 社交召回权重标定与两层统一测试集评测（选型/角色/方法论在 [social-recall.md](social-recall.md)，融合流水线细节在 `datasets/README.md`，不入 git） | 🔨 实现中（v3-full 全量物化完成 309,512 条 / 4,361 query / 完整 social 组 19,994，Schema/split/VIF 通过；人工锚点按用户决定跳过、仅 LLM 预标注；E01–E10 待实现） | P3 | [social-recall.md](social-recall.md)（「数据融合与统一测试集」「调优路线」） |
 | 离线自动调参闭环（Qwen3.5-4B 评分 + 贝叶斯优化） | 📝 设计定稿，实验未开始 | P3 | [social-recall.md](social-recall.md)（「自动调参闭环」） |
 | 文档上传（pdf / docx / html → markitdown） | 📝 设计定稿，代码未实现 | P1.5 | 本文「文档转换」、[product.md](product.md)（「文档上传」） |
 | 向量化按模型存储与检索路由 | 📝 设计定稿，代码未实现 | P1.5 | [service/vector-store/docs/architecture.md](../service/vector-store/docs/architecture.md)（「向量化按模型存储与检索路由」） |

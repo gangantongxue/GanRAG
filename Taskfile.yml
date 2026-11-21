@@ -10,23 +10,39 @@ version: '3'
 #   task run                       后台启动所有已实现服务
 #   task run -- vector-store       前台启动指定服务
 #   task stop                      停止所有服务容器
-#   task ds-check                  数据集融合脚本自检（假数据 + mock 模型）
-#   task ds-smoke                  数据集融合真模型冒烟（ds-run 前必过）
-#   task ds-run                    数据集融合闭环：开始/续跑（ROUNDS=10 分批）
-#   task ds-status                 查看数据集融合调参进度
+#   task ds-check VERSION=v3       数据集融合脚本自检（VERSION 默认 v3；v2 用 VERSION=v2）
+#   task ds-smoke VERSION=v3       数据集融合真模型冒烟（ds-run 前必过）
+#   task ds-run VERSION=v2         数据集融合闭环：开始/续跑（ROUNDS=10 分批）
+#   task ds-status VERSION=v3      查看数据集融合调参进度
 #   task ds-archive-v1             v1 核心产物归档（一次性；之后版本自动隔离）
-#   task ds-embed                  BM25 + 向量 + 精确 top-K（长任务，可分批/续跑）
-#   task ds-build-tuning           构建 neutral/joint 调参数据
-#   task ds-tune                   联合扫描召回参数（NDCG@10 / Recall@20）
+#   task ds-embed VERSION=v3       BM25 + 向量 + 精确 top-K（长任务，可分批/续跑）
+#   task ds-build-tuning VERSION=v3 构建 neutral/joint 调参数据
+#   task ds-tune VERSION=v3        联合扫描召回参数（NDCG@10 / Recall@20）
+#   task ds-exp EID=E01 VERSION=v3 单个实验（-- --smoke 快速验证）
+#   task ds-exp-all EIDS="E01 E05" 批量实验
 
 # 服务列表：自动发现 service/<name>/Taskfile.yml 并按名称排序
 vars:
   SERVICES:
     sh: find service -mindepth 2 -maxdepth 2 -name Taskfile.yml -exec dirname {} \; | xargs -n1 basename | sort
-  # 数据集融合每批次轮数（task ds-run ROUNDS=5 覆盖；命令行变量优先于此处默认值）
-  ROUNDS: "10"
-  # v3 融合复用 v2 引擎；该 venv 内安装 numpy（向量链路使用）
+  # 数据集版本：v3（默认）走 datasets/configs/v3/fusion.json；v1/v2 走 datasets/configs/fusion.json。
+  # 自定义配置用 task ds-... CONFIG=path/to/fusion.json 覆盖。
+  VERSION: "v3"
+  CONFIG: ""
+  DS_CONFIG:
+    sh: |
+      if [ -n "{{.CONFIG}}" ]; then echo "{{.CONFIG}}";
+      elif [ "{{.VERSION}}" = "v3" ]; then echo "datasets/configs/v3/fusion.json";
+      elif [ "{{.VERSION}}" = "v1" ] || [ "{{.VERSION}}" = "v2" ]; then echo "datasets/configs/fusion.json";
+      else echo "datasets/configs/{{.VERSION}}/fusion.json"; fi
+  # 数据集脚本统一使用该 venv（已装 numpy；v2/v3 共用）
   DS_PYTHON: "datasets/.venv/bin/python"
+  # 每批次轮数与小 L2 query 数
+  ROUNDS: "10"
+  L2_QUERIES: "200"
+  # 实验入口
+  EID: "E01"
+  EIDS: "E01 E02A E02B E03A E03B E04 E05 E06 E07 E08 E09 E10"
 
 tasks:
   default:
@@ -126,155 +142,144 @@ tasks:
     cmds:
       - go run ./pkg/db/gen
 
-  # ---- 数据集融合（datasets/，不入 git；细节见 datasets/README.md）----
+  # ---- 数据集融合 / 实验（统一用 VERSION 选配置与产物版本）----
+  #
+  # VERSION=v3（默认）→ datasets/configs/v3/fusion.json，产物 processed/v3/...
+  # VERSION=v2        → datasets/configs/fusion.json，产物 processed/v2/...
+  # 自定义配置：task ds-check CONFIG=path/to/fusion.json
 
   ds-check:
-    desc: 数据集融合脚本自检（假数据 + mock 模型，秒级；含抽查回答解析契约测试）
-    cmds:
-      - python3 datasets/scripts/run.py --check
-
-  ds-smoke:
-    desc: 数据集融合真模型冒烟（小骨架 2 轮），验证 Ollama 链路/解析/落盘/续跑，ds-run 前必过
-    cmds:
-      - python3 datasets/scripts/run.py --smoke
-
-  ds-run:
-    desc: 数据集融合闭环：开始/续跑，分批执行（task ds-run ROUNDS=5 [-- --allow-script-change]）
-    cmds:
-      - python3 datasets/scripts/run.py --rounds {{.ROUNDS}} {{.CLI_ARGS}}
-
-  ds-materialize:
-    desc: 用最优参数物化全量候选记录集（processed/<版本>/candidates.jsonl，收敛后执行）
-    cmds:
-      - python3 datasets/scripts/run.py --materialize
-
-  ds-status:
-    desc: 查看数据集融合调参进度（累计轮数/当前参数/区间结论），不执行
-    cmds:
-      - python3 datasets/scripts/run.py --status
-
-  ds-archive-v1:
-    desc: v1 核心产物归档到 datasets/archive/v1/（一次性；之后 v2/v3 自动版本隔离）
-    cmds:
-      - python3 datasets/scripts/run.py --archive-v1 {{.CLI_ARGS}}
-
-  ds-embed:
-    desc: BM25 过滤 + Qwen3-Embedding + 精确 top-K（长任务，可中断续跑；小样验证 task ds-embed -- --limit 1000）
-    cmds:
-      - python3 datasets/scripts/embed.py --all {{.CLI_ARGS}}
-
-  ds-embed-bm25:
-    desc: 只过滤 T2Ranking BM25 到选中 query 的 top-K
-    cmds:
-      - python3 datasets/scripts/embed.py --bm25 {{.CLI_ARGS}}
-
-  ds-embed-collection:
-    desc: 只向量化 collection（可中断续跑）
-    cmds:
-      - python3 datasets/scripts/embed.py --collection {{.CLI_ARGS}}
-
-  ds-embed-queries:
-    desc: 只向量化选中 query
-    cmds:
-      - python3 datasets/scripts/embed.py --queries {{.CLI_ARGS}}
-
-  ds-embed-search:
-    desc: 只做向量精确 top-K 检索
-    cmds:
-      - python3 datasets/scripts/embed.py --search {{.CLI_ARGS}}
-
-  ds-build-tuning:
-    desc: 构建 neutral/joint 两层调参数据（processed/<版本>/tuning.jsonl）
-    cmds:
-      - python3 datasets/scripts/build_tuning.py {{.CLI_ARGS}}
-
-  ds-tune:
-    desc: 联合扫描召回参数（NDCG@10/Recall@20；task ds-tune -- --layer joint --max-queries 3000）
-    cmds:
-      - python3 datasets/scripts/tune.py {{.CLI_ARGS}}
-
-  # ---- v3 融合（复用 v2 引擎；DS_CONFIG 指向 datasets/configs/v3/fusion.json）----
-
-  ds-v3-check:
-    desc: v3 融合脚本自检（假数据 + mock 模型，秒级）
+    desc: 融合脚本自检（VERSION=v3 默认；v2：task ds-check VERSION=v2）
     env:
-      DS_CONFIG: datasets/configs/v3/fusion.json
+      DS_CONFIG: "{{.DS_CONFIG}}"
     cmds:
       - "{{.DS_PYTHON}} datasets/scripts/run.py --check"
 
-  ds-v3-smoke:
-    desc: v3 融合真模型冒烟（小骨架 2 轮，验证 Ollama/解析/落盘/续跑）
+  ds-smoke:
+    desc: 融合真模型冒烟（VERSION=v3 默认；ds-run 前必过）
     env:
-      DS_CONFIG: datasets/configs/v3/fusion.json
+      DS_CONFIG: "{{.DS_CONFIG}}"
     cmds:
       - "{{.DS_PYTHON}} datasets/scripts/run.py --smoke"
 
-  ds-v3-run:
-    desc: v3 融合闭环：开始/续跑（task ds-v3-run ROUNDS=10）
+  ds-run:
+    desc: 融合闭环：开始/续跑（task ds-run VERSION=v2 ROUNDS=5；v3-full 用 ds-materialize）
     env:
-      DS_CONFIG: datasets/configs/v3/fusion.json
+      DS_CONFIG: "{{.DS_CONFIG}}"
     cmds:
       - "{{.DS_PYTHON}} datasets/scripts/run.py --rounds {{.ROUNDS}} {{.CLI_ARGS}}"
 
-  ds-v3-status:
-    desc: 查看 v3 融合调参进度（不执行）
+  ds-status:
+    desc: 查看融合调参进度（VERSION=v3 默认）
     env:
-      DS_CONFIG: datasets/configs/v3/fusion.json
+      DS_CONFIG: "{{.DS_CONFIG}}"
     cmds:
       - "{{.DS_PYTHON}} datasets/scripts/run.py --status"
 
-  ds-v3-materialize:
-    desc: 用 v3 最优参数物化 processed/v3/candidates.jsonl
+  ds-archive-v1:
+    desc: v1 核心产物归档到 datasets/archive/v1/（一次性）
     env:
-      DS_CONFIG: datasets/configs/v3/fusion.json
+      DS_CONFIG: "{{.DS_CONFIG}}"
+    cmds:
+      - "{{.DS_PYTHON}} datasets/scripts/run.py --archive-v1 {{.CLI_ARGS}}"
+
+  ds-materialize:
+    desc: 物化全量候选集（VERSION 决定 processed/<版本>/candidates.jsonl）
+    env:
+      DS_CONFIG: "{{.DS_CONFIG}}"
     cmds:
       - "{{.DS_PYTHON}} datasets/scripts/run.py --materialize"
 
-  ds-v3-embed:
-    desc: v3 BM25 过滤 + 向量化 + 精确 top-K（长任务，可中断续跑）
+  ds-materialize-l2:
+    desc: 物化小 L2（VERSION=v3 默认；L2_QUERIES=200）
     env:
-      DS_CONFIG: datasets/configs/v3/fusion.json
+      DS_CONFIG: "{{.DS_CONFIG}}"
+    cmds:
+      - "{{.DS_PYTHON}} datasets/scripts/run.py --materialize --limit-queries {{.L2_QUERIES}} --out datasets/processed/{{.VERSION}}/l2/candidates.jsonl"
+
+  ds-accept-l2:
+    desc: 小 L2 验收（Schema/split/VIF/锚点 → processed/<版本>/acceptance）
+    env:
+      DS_CONFIG: "{{.DS_CONFIG}}"
+    cmds:
+      - "{{.DS_PYTHON}} datasets/scripts/l2_accept.py --input datasets/processed/{{.VERSION}}/l2/candidates.jsonl --out datasets/processed/{{.VERSION}}/acceptance --all"
+
+  ds-embed:
+    desc: BM25 + 向量 + 精确 top-K（长任务；VERSION=v3 默认）
+    env:
+      DS_CONFIG: "{{.DS_CONFIG}}"
     cmds:
       - "{{.DS_PYTHON}} datasets/scripts/embed.py --all {{.CLI_ARGS}}"
 
-  ds-v3-embed-bm25:
-    desc: v3 只过滤 T2Ranking BM25 到选中 query 的 top-K
+  ds-embed-bm25:
+    desc: 只过滤 T2Ranking BM25 到选中 query 的 top-K
     env:
-      DS_CONFIG: datasets/configs/v3/fusion.json
+      DS_CONFIG: "{{.DS_CONFIG}}"
     cmds:
       - "{{.DS_PYTHON}} datasets/scripts/embed.py --bm25 {{.CLI_ARGS}}"
 
-  ds-v3-embed-collection:
-    desc: v3 只向量化 collection（可中断续跑）
+  ds-embed-collection:
+    desc: 只向量化 collection（可中断续跑）
     env:
-      DS_CONFIG: datasets/configs/v3/fusion.json
+      DS_CONFIG: "{{.DS_CONFIG}}"
     cmds:
       - "{{.DS_PYTHON}} datasets/scripts/embed.py --collection {{.CLI_ARGS}}"
 
-  ds-v3-embed-queries:
-    desc: v3 只向量化选中 query
+  ds-embed-queries:
+    desc: 只向量化选中 query
     env:
-      DS_CONFIG: datasets/configs/v3/fusion.json
+      DS_CONFIG: "{{.DS_CONFIG}}"
     cmds:
       - "{{.DS_PYTHON}} datasets/scripts/embed.py --queries {{.CLI_ARGS}}"
 
-  ds-v3-embed-search:
-    desc: v3 只做向量精确 top-K 检索
+  ds-embed-search:
+    desc: 只做向量精确 top-K 检索
     env:
-      DS_CONFIG: datasets/configs/v3/fusion.json
+      DS_CONFIG: "{{.DS_CONFIG}}"
     cmds:
       - "{{.DS_PYTHON}} datasets/scripts/embed.py --search {{.CLI_ARGS}}"
 
-  ds-v3-build-tuning:
-    desc: 构建 v3 neutral/joint 两层调参数据（processed/v3/tuning.jsonl）
+  ds-build-tuning:
+    desc: 构建 neutral/joint 两层调参数据（VERSION=v3 默认）
     env:
-      DS_CONFIG: datasets/configs/v3/fusion.json
+      DS_CONFIG: "{{.DS_CONFIG}}"
     cmds:
       - "{{.DS_PYTHON}} datasets/scripts/build_tuning.py {{.CLI_ARGS}}"
 
-  ds-v3-tune:
-    desc: v3 联合扫描召回参数（task ds-v3-tune -- --layer joint --max-queries 3000）
+  ds-tune:
+    desc: 联合扫描召回参数（task ds-tune VERSION=v3 -- --layer joint --max-queries 3000）
     env:
-      DS_CONFIG: datasets/configs/v3/fusion.json
+      DS_CONFIG: "{{.DS_CONFIG}}"
     cmds:
       - "{{.DS_PYTHON}} datasets/scripts/tune.py {{.CLI_ARGS}}"
+
+  # ---- 实验（E01–E10）----
+
+  ds-exp-check:
+    desc: 实验脚本自检（合成小数据，秒级）
+    env:
+      DS_CONFIG: "{{.DS_CONFIG}}"
+      PYTHONPATH: datasets/scripts
+    cmds:
+      - "{{.DS_PYTHON}} -m experiments --self-test"
+
+  ds-exp:
+    desc: 单个实验（task ds-exp EID=E01 VERSION=v3 -- --smoke；EID 大小写不敏感；E01–E10 目前只支持 v3）
+    env:
+      DS_CONFIG: "{{.DS_CONFIG}}"
+      PYTHONPATH: datasets/scripts
+    cmds:
+      - "{{.DS_PYTHON}} -m experiments {{.EID}} {{.CLI_ARGS}}"
+
+  ds-exp-all:
+    desc: 批量实验（task ds-exp-all EIDS="E01 E05" VERSION=v3 -- --smoke；E01–E10 目前只支持 v3）
+    env:
+      DS_CONFIG: "{{.DS_CONFIG}}"
+      PYTHONPATH: datasets/scripts
+    cmds:
+      - |
+        set -e
+        for eid in {{.EIDS}}; do
+          echo "==> experiment ${eid}"
+          "{{.DS_PYTHON}}" -m experiments "$eid" {{.CLI_ARGS}}
+        done

@@ -10,9 +10,8 @@
 | 数据集落位与文档口径整理：新增 `datasets/`（不进 git，内含融合方案说明文档）承载数据集与融合细节；项目文档只记录「用融合后数据集做整体参数调整训练」+ 粗到细调参，精简全部数据集名称/细节（[social-recall.md](social-recall.md) 第 7 章等），「单独模块单独数据集训练」口径改为整体调参 | 2026-10-23 | ✅已完成(2026-10-23) |
 | GanRAG v3 数据集阶段 1–2：按 [v3-dataset-design.md](v3-dataset-design.md) §10 落盘 9 份核心文件 + `environment.lock`（`datasets/configs/v3/`）；固定 T2Ranking/DISGCN/ChronoQA 版本、SHA256、许可证；完成 E01/E02a-b/E04/E09 原生数据小样验收；不启动全量物化、不改 v2 | 2026-11-08 | ✅已完成(2026-11-08) |
 | GanRAG v3 融合可执行化：复用 v2 融合引擎 + `datasets/configs/v3/fusion.json` + `ds-v3-*` 命令；建 venv/numpy、下载 BM25、跑 check/smoke；不启动全量融合 | 2026-11-08 | ✅已完成(2026-11-08) |
-| GanRAG v3 阶段 3–5：100–200 query 小规模 L2 + Schema/split 断言 + 共线性诊断 + 300/120 人工锚点验收；通过后冻结 interaction terms、参数范围与实验脚本 | 2026-11-08 | ⬜待处理 |
-| GanRAG v3 完整 Schema 引擎：把当前 `v2-reuse` / `v3-preview` 升级为完整 v3 字段（`counterfactual_group_id`、`label_status`、`semantic_score_config_id` 等），供严格 E05/E06/E10 实验 | 2026-11-08 | ⬜待处理 |
-| GanRAG v3 阶段 6–8：全量物化（2k–5k query / 20k–40k pair / ≥1,000 counterfactual group）并执行 E01–E10；最终测试集只用于最终报告 | 2026-11-08 | ⬜待处理 |
+| GanRAG v3 阶段 6–8：全量物化（2k–5k query / 20k–40k pair / ≥1,000 counterfactual group）并执行 E01–E10；最终测试集只用于最终报告（全量物化完成：309,512 条 / 4,361 query / 34,888 pair / 完整 social 组 19,994，Schema/split/VIF 通过；E01–E10 脚本与实验待执行） | 2026-11-08 | 🔨进行中 |
+| GanRAG v3-full E01–E10 数据工作：E01/E02A/E02B/E03A/E03B/E04/E05/E06/E07/E08/E09/E10 全部完成并出结果（E02/E03 为 numpy 原生社交特征基线；E04/E09 为 FTS5 unicode61(bigram) article 级代理检索，E09 复用 E04；E05/E06 已补 Bootstrap CI 与配对检验；E10 用固定随机合成用户派生视图）；E01b 跳过、E09b blocked；FIX-032 BM25 缺口仍保留分层报告 | 2026-11-20 | ✅已完成(2026-11-21) |
 | env 配置统一到仓库根 `.env`（服务启动自动加载根 `.env`、删 `service/user/.env`、根 `.env` 补齐 JWT/Redis/邮件占位等全部变量，`.env.example` 与文档同步） | 2026-10-17 | ✅已完成(2026-10-17) |
 | 引入 Redis（compose + 配置 + go-redis）+ 邮箱验证码落 Redis（`user:email_code:<scene>:<email>`，TTL 5 分钟、一次性、失败 5 次作废、发送 60s 限频）+ 验证码邮件发送通道（SMTP 落地时定） | 2026-10-15 | ✅已完成(2026-10-17) |
 | users 相关代码适配（建表迁移已交付 2026-10-15）：注册/登录改「邮箱+密码」、注册接邮箱验证码、执行 `task db-gen` 并适配 store/handler 到新表结构 | 2026-10-15 | ✅已完成(2026-10-17) |
@@ -64,3 +63,7 @@
 | 时效口径收敛为单基准：时效性判断 = 文章最后修改时间 `updated_at`，无最后修改时间时 `created_at` 兜底（刚创建两值相同）；不建模 `published_at`/内容级时间。融合数据集保留单字段 `published_at` 命名（语义映射为时效基准时间），不涉及召回时间权重数值；`timeDecay` 标定加「弱影响」约束（影响显著小于语义/社交，半衰期以长档为主）；同步 data-model / database / social-recall / datasets/README | 2026-10-24 | ✅已完成(2026-10-24) |
 | 端到端加密方案文档落地：新增 [e2ee.md](e2ee.md)（OPAQUE RFC 9807 + key bundle + 恢复码 + 私聊消息层 + 威胁模型 A/服务端重置密码与离线猜密码残余风险），同步 README / architecture / data-model / database / product / user 架构 / fix / todo | 2026-11-01 | ✅已完成(2026-11-01) |
 | 文档对齐最新召回方案：重排模型改 Qwen3-Reranker-0.6B（语义召回后、最终融合前；`w_audit` 退出主公式，Decima `noul` 降为语义路可选排序器），新增 Qwen3.5-4B 离线调参评分闭环、两层统一测试集与公开数据集选型口径；见 [social-recall.md](social-recall.md) | 2026-11-02 | ✅已完成(2026-11-02) |
+| GanRAG v3 `v3-preview` 可执行化收尾：23 轮融合调参收敛（`search_stage=done`）、152,707 条预物化（4,361 query / 25,774 pair）；产物归档到 `datasets/archive/v3-preview/`，仅作开发过程留痕，不作正式实验数据、不与 v3-full 指标比较 | 2026-11-19 | ✅已完成(2026-11-19) |
+| GanRAG v3 完整 Schema 引擎：归档 `v3-preview`，升级为 `v3-native` / `v3-full`（51 字段口径；L2 输出 46 个，5 个原生 DISGCN 字段只留 E02/E03；RRF 语义分、`label_status`/`negative_subtype`、social 反事实组、split/泄漏断言），新增小 L2 验收工具；200-query L2 14,197 条、complete social 组 907、Schema/split/VIF 全部通过 | 2026-11-19 | ✅已完成(2026-11-19) |
+| GanRAG v3 阶段 3–5：200-query 小 L2 + Schema/split/VIF 已通过；**人工锚点按用户决定跳过**，以 LLM 预标注（300/120 样本、`anchors.review.csv`）代替，不计算/不声称 human agreement；interaction terms 与参数范围未冻结 | 2026-11-08 | ✅已完成(2026-11-20) |
+| Taskfile 数据集命令收敛：删除 `ds-v3-*` 重复命令，统一为 `ds-*` + `VERSION`（默认 v3；v2 用 VERSION=v2）+ `CONFIG` 覆盖；实验入口统一 `ds-exp EID=...` / `ds-exp-all EIDS=...`；不重跑数据，仅改命令 | 2026-11-21 | ✅已完成(2026-11-21) |
